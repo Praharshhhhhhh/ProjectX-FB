@@ -1,0 +1,31 @@
+# ─────────────────────────────────────────────────────────────
+#  ProjectX — single requirements file (backend + desktop client)
+#  Install:  pip install -r requirements.txt
+# ─────────────────────────────────────────────────────────────
+
+# ── Backend (FastAPI API) ──
+fastapi==0.111.0
+uvicorn[standard]==0.29.0
+sqlalchemy==2.0.25
+websockets>=12.0
+websocket-client>=1.7.0
+pydantic[email]==2.7.1
+pydantic-settings==2.2.1
+python-jose[cryptography]==3.3.0
+cryptography>=42.0.0
+passlib[bcrypt]==1.7.4
+bcrypt==4.0.1
+python-multipart==0.0.9
+apscheduler==3.10.4
+websockets==12.0
+psycopg2-binary==2.9.9          # PostgreSQL driver (remove if using SQLite only)
+
+# ── Desktop client (PyQt6 GUI) ──
+PyQt6==6.7.0
+Pillow==10.3.0
+
+# ── Shared (used by both) ──
+httpx==0.27.0
+pyotp==2.9.0
+qrcode[pil]==7.4.2
+python-dotenv==1.0.1

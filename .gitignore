@@ -1,0 +1,44 @@
+# ─── Virtual environments (never upload these) ───
+venv/
+*/venv/
+**/venv/
+env/
+.venv/
+
+# ─── Python cache / build ───
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+build/
+dist/
+
+# ─── Secrets / environment ───
+.env
+**/.env
+!.env.example
+
+# ─── Database files ───
+*.db
+*.sqlite
+*.sqlite3
+projectx.db
+
+# ─── Logs / runtime output ───
+*.log
+server_err.txt
+server_out.txt
+**/server_err.txt
+**/server_out.txt
+
+# ─── OS junk ───
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ─── IDE / editor ───
+.vscode/
+.idea/
+*.swp
+*~

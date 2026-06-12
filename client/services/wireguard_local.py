@@ -1,0 +1,166 @@
+import os
+import sys
+import json
+import time
+import subprocess
+from typing import Optional, Tuple
+# pyrefly: ignore [missing-import]
+from config import WG_INTERFACE, WG_KEY_STORAGE, WG_CONFIG_DIR
+
+def _run_cmd(cmd: list) -> str:
+    try:
+        # Use CREATE_NO_WINDOW on Windows so no console pops up
+        creationflags = 0
+        if sys.platform == "win32":
+            creationflags = subprocess.CREATE_NO_WINDOW
+        
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, check=True, creationflags=creationflags
+        )
+        return result.stdout.strip()
+    except subprocess.CalledProcessError as e:
+        # Fallback or error handling
+        return ""
+    except FileNotFoundError:
+        # Binary not found
+        return ""
+
+def get_or_create_keypair(storage_path: str = WG_KEY_STORAGE) -> Tuple[str, str]:
+    if os.path.exists(storage_path):
+        try:
+            with open(storage_path, "r") as f:
+                data = json.load(f)
+                if "private_key" in data and "public_key" in data:
+                    return data["private_key"], data["public_key"]
+        except Exception:
+            pass
+
+    # Generate new keypair
+    priv, pub = generate_keypair()
+    if priv and pub:
+        os.makedirs(os.path.dirname(storage_path), exist_ok=True)
+        with open(storage_path, "w") as f:
+            json.dump({"private_key": priv, "public_key": pub}, f)
+    return priv, pub
+
+WG_CMD = r"C:\Program Files\WireGuard\wg.exe" if sys.platform == "win32" else "wg"
+
+def generate_keypair() -> Tuple[str, str]:
+    try:
+        creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+        priv = subprocess.run([WG_CMD, "genkey"], capture_output=True, text=True, check=True, creationflags=creationflags).stdout.strip()
+        pub = subprocess.run([WG_CMD, "pubkey"], input=priv, capture_output=True, text=True, check=True, creationflags=creationflags).stdout.strip()
+        return priv, pub
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return "", ""
+
+def write_config(private_key: str, assigned_ip: str, server_pubkey: str, server_endpoint: str, config_path: str) -> bool:
+    config = f"""[Interface]
+PrivateKey = {private_key}
+Address = {assigned_ip}/32
+
+[Peer]
+PublicKey = {server_pubkey}
+Endpoint = {server_endpoint}
+AllowedIPs = 10.0.0.0/24
+PersistentKeepalive = 25
+"""
+    try:
+        os.makedirs(os.path.dirname(config_path), exist_ok=True)
+        with open(config_path, "w") as f:
+            f.write(config)
+        return True
+    except Exception:
+        return False
+
+def connect(config_name_or_path: str) -> bool:
+    # If the user passes just the name, construct path if needed, but the instructions say
+    # config_name -> wireguard.exe /installtunnelservice <path>
+    if sys.platform == "win32":
+        # Windows requires the full path for installtunnelservice usually
+        # But we will assume config_name_or_path is the path if it ends in .conf
+        path = config_name_or_path
+        if not path.endswith(".conf"):
+            path = os.path.join(WG_CONFIG_DIR, f"{config_name_or_path}.conf")
+        cmd = ["wireguard.exe", "/installtunnelservice", path]
+    else:
+        # Linux wg-quick takes the config name (interface name)
+        name = os.path.basename(config_name_or_path).replace(".conf", "")
+        cmd = ["wg-quick", "up", name]
+        
+    try:
+        creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+        subprocess.run(cmd, capture_output=True, check=True, creationflags=creationflags)
+        return True
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return False
+
+def disconnect(config_name: str) -> bool:
+    if sys.platform == "win32":
+        # Usually /uninstalltunnelservice takes the interface name
+        name = os.path.basename(config_name).replace(".conf", "")
+        cmd = ["wireguard.exe", "/uninstalltunnelservice", name]
+    else:
+        name = os.path.basename(config_name).replace(".conf", "")
+        cmd = ["wg-quick", "down", name]
+        
+    try:
+        creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+        subprocess.run(cmd, capture_output=True, check=True, creationflags=creationflags)
+        return True
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return False
+
+def get_status(config_name: str) -> str:
+    name = os.path.basename(config_name).replace(".conf", "")
+    out = _run_cmd([WG_CMD, "show", name, "latest-handshakes"])
+    if not out:
+        return "disconnected"
+    
+    # wg show <iface> latest-handshakes output: <peer-pubkey> \t <timestamp>
+    try:
+        parts = out.split()
+        if len(parts) >= 2:
+            ts = int(parts[1])
+            if ts == 0:
+                return "connecting"
+            if time.time() - ts < 180:
+                return "connected"
+            return "disconnected"
+    except Exception:
+        pass
+    return "disconnected"
+
+def get_node_info() -> dict:
+    priv, pub = get_or_create_keypair()
+    return {"address": pub}
+
+def get_network_ip(config_name: str) -> Optional[str]:
+    # We can parse `wg show <iface> endpoints` or we can just read from the conf if needed.
+    # But let's read the IPs from `ip addr` or `netsh`?
+    # Actually, wireguard doesn't show local IP in `wg show` directly except for allowed IPs.
+    # We can read the wg configuration file or parse `ipconfig`/`ip` command.
+    # Wait, reading from config file is much easier and cross platform.
+    name = os.path.basename(config_name).replace(".conf", "")
+    path = os.path.join(WG_CONFIG_DIR, f"{name}.conf")
+    try:
+        with open(path, "r") as f:
+            for line in f:
+                if line.strip().lower().startswith("address"):
+                    # Address = 10.0.0.2/32
+                    ip_part = line.split("=")[1].strip()
+                    return ip_part.split("/")[0]
+    except Exception:
+        pass
+    return None
+
+def is_wireguard_running() -> bool:
+    try:
+        creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+        res = subprocess.run([WG_CMD, "show"], capture_output=True, text=True, check=True, creationflags=creationflags)
+        # If output has interface, it's running
+        if "interface:" in res.stdout:
+            return True
+        return False
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return False
