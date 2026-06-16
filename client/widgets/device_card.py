@@ -421,6 +421,19 @@ class DeviceCard(QFrame):
         self.router_btn.setVisible(bool(self.device.get("lan_ip") and self.device.get("lan_ip") != "—"))
         btn_layout.addWidget(self.router_btn)
             
+        self.dl_btn = QPushButton("↓")
+        self.dl_btn.setFixedSize(26, 26)
+        self.dl_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.dl_btn.setToolTip("Download .conf")
+        self.dl_btn.setStyleSheet("""
+            QPushButton {
+                background: white; color: #475569; border: 1px solid #cbd5e1; border-radius: 4px; font-size: 14px; font-weight: bold;
+            }
+            QPushButton:hover { background: #f8fafc; }
+        """)
+        self.dl_btn.clicked.connect(self._download_conf)
+        btn_layout.addWidget(self.dl_btn)
+            
         top.addLayout(btn_layout)
 
         # Toggle Switch
@@ -558,8 +571,31 @@ class DeviceCard(QFrame):
         self.rescan_btn.clicked.connect(self._rescan_network)
         rescan_l.addWidget(self.rescan_btn)
         rescan_l.addStretch()
-        rescan_w.setStyleSheet("border:none;")
+        rescan_w.setStyleSheet("background:transparent;border:none;")
         self.expanded_layout.addWidget(rescan_w)
+
+    def _download_conf(self):
+        from PyQt6.QtWidgets import QFileDialog, QMessageBox
+        from widgets.common import Worker
+        import re
+        safe_name = re.sub(r'[^a-zA-Z0-9_-]', '_', self.device.get("name", "wg_client"))
+        path, _ = QFileDialog.getSaveFileName(self, "Save WireGuard Config", f"{safe_name}.conf", "Conf Files (*.conf)")
+        if not path:
+            return
+            
+        self._dl_w = Worker(self.api.download_conf, self.device["id"])
+        self._dl_w.result.connect(lambda data, p=path: self._save_conf_file(data, p))
+        self._dl_w.error.connect(lambda e: QMessageBox.warning(self, "Error", f"Download failed: {e}"))
+        self._dl_w.start()
+
+    def _save_conf_file(self, data: str, path: str):
+        from PyQt6.QtWidgets import QMessageBox
+        try:
+            with open(path, "w") as f:
+                f.write(data)
+            QMessageBox.information(self, "Success", "Config downloaded successfully!")
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Failed to save: {e}")
 
     def _rescan_network(self):
         self.rescan_btn.setText("Scanning…")

@@ -70,6 +70,14 @@ def get_device_shares(device_id: int, current_user: Annotated[User, Depends(get_
     shares = db.query(DeviceShare).filter_by(device_id=device.id).all()
     return shares
 
+@router.get("/tenant-directory")
+def get_tenant_directory(current_user: Annotated[User, Depends(get_current_user)], db: Annotated[Session, Depends(get_db)]):
+    # Only master or second_master can view the directory for sharing purposes
+    if current_user.role not in (UserRole.master, UserRole.second_master):
+        raise HTTPException(status_code=403, detail="Not authorized")
+    tenants = db.query(Tenant).filter(Tenant.id != current_user.tenant_id).all()
+    return [{"id": t.id, "company_name": t.company_name} for t in tenants]
+
 @router.delete("/{share_id}")
 async def revoke_share(share_id: int, current_user: Annotated[User, Depends(get_current_user)], db: Annotated[Session, Depends(get_db)]):
     share = db.query(DeviceShare).filter(DeviceShare.id == share_id).first()

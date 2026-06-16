@@ -241,6 +241,18 @@ async def device_heartbeat(req: DeviceRegister, db: Annotated[Session, Depends(g
     if not device:
         return await register_device(req, db)
 
+    alert_msg = None
+    if req.lan_ip and device.lan_ip and req.lan_ip != device.lan_ip:
+        alert_msg = f"Alert: Device '{device.name}' LAN IP changed from {device.lan_ip} to {req.lan_ip}"
+    if req.lan_subnet and device.lan_subnet and req.lan_subnet != device.lan_subnet:
+        alert_msg = f"Alert: Device '{device.name}' LAN Subnet changed from {device.lan_subnet} to {req.lan_subnet}"
+
+    if alert_msg:
+        from services.audit_service import log
+        from models.audit_log import AuditLevel
+        log(db, "lan_changed", alert_msg, tenant_id=device.tenant_id, level=AuditLevel.warning)
+        await manager.broadcast_to_tenant(device.tenant_id, {"event": "alert", "message": alert_msg})
+
     device.network_id = req.network_id
     if req.zerotier_ip:
         device.zerotier_ip = req.zerotier_ip
@@ -469,7 +481,13 @@ async def get_device_conf(device_id: int, current_user: Annotated[User, Depends(
     from config import get_settings
     settings = get_settings()
     tenant = db.query(Tenant).filter(Tenant.id == device.tenant_id).first()
-    server_pubkey = await wireguard_controller.get_server_public_key(interface=tenant.wg_server_interface if tenant else "wg0")
+    
+    server_pubkey = ""
+    if tenant and tenant.wg_server_public_key:
+        server_pubkey = tenant.wg_server_public_key
+    else:
+        server_pubkey = await wireguard_controller.get_server_public_key(interface=tenant.wg_server_interface if tenant else "wg0")
+        
     server_endpoint = tenant.wg_server_endpoint if tenant and tenant.wg_server_endpoint else getattr(settings, "WG_SERVER_ENDPOINT", "127.0.0.1:51820")
     
     conf = wireguard_controller.generate_client_config(

@@ -19,6 +19,9 @@ class TenantOut(BaseModel):
     zerotier_network_id: Optional[str]
     status: str
     created_at: datetime
+    wg_server_public_key: Optional[str] = None
+    wg_server_endpoint: Optional[str] = None
+    wg_server_endpoint_secondary: Optional[str] = None
     device_count: int = 0
     user_count: int = 0
 

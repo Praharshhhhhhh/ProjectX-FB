@@ -274,8 +274,6 @@ class OwnerDashboardPage(QWidget):
             self._dtw.start()
 
         user_info = self.api._user or getattr(self.window(), "user", {})
-        if not _confirm_delete(self, "Confirm Delete", f'Delete tenant "{name}"? This cannot be undone.'):
-            return
         _prompt_sensitive_action(
             self, user_info, "Confirm Delete",
             "Please confirm tenant deletion",
@@ -497,8 +495,6 @@ class TenantsPage(QWidget):
             self._dw.start()
 
         user_info = self.api._user or getattr(self.window(), "user", {})
-        if not _confirm_delete(self, "Confirm Delete", f'Delete tenant "{name}"? This cannot be undone.'):
-            return
         _prompt_sensitive_action(
             self, user_info, "Confirm Delete",
             "Please confirm tenant deletion",

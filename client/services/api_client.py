@@ -4,10 +4,15 @@ from typing import Optional
 from config import BACKEND_URL
 
 
+class TokenExpiredOfflineError(Exception):
+    pass
+
 class APIClient:
     def __init__(self):
         self.token: Optional[str] = None
         self.base = BACKEND_URL
+        self.last_cached_at = 0
+        self.is_offline = False
         self._client = httpx.Client(
             timeout=10.0,
             limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
@@ -23,9 +28,25 @@ class APIClient:
 
     def _req(self, method: str, path: str, **kwargs):
         url = self.base + path
-        resp = self._client.request(method, url, headers=self._headers(), **kwargs)
-        resp.raise_for_status()
-        return resp.json()
+        try:
+            resp = self._client.request(method, url, headers=self._headers(), **kwargs)
+            resp.raise_for_status()
+            self.is_offline = False
+            data = resp.json()
+            if method == "GET":
+                from services.cache_service import cache_service
+                cache_service.set_cache(path, data)
+            self.last_cached_at = 0
+            return data
+        except (httpx.RequestError, OSError) as e:
+            self.is_offline = True
+            if method == "GET":
+                from services.cache_service import cache_service
+                data, cached_at = cache_service.get_cache(path)
+                if data is not None:
+                    self.last_cached_at = cached_at
+                    return data
+            raise
 
     # ── Auth ──────────────────────────────────────────────────────
     def login(self, email: str, password: str) -> dict:
@@ -42,49 +63,43 @@ class APIClient:
         self._user = None
 
     def _queue_offline_action(self, action: str, payload: dict):
-        import json
-        from pathlib import Path
-        queue_file = Path.home() / ".projectx" / "offline_queue.json"
-        queue_file.parent.mkdir(parents=True, exist_ok=True)
-        queue = []
-        if queue_file.exists():
-            try:
-                queue = json.loads(queue_file.read_text())
-            except Exception:
-                pass
-        queue.append({"action": action, "payload": payload})
-        queue_file.write_text(json.dumps(queue))
+        from services.cache_service import cache_service
+        cache_service.add_offline_action(action, payload)
 
     def sync_offline_queue(self):
-        import json
-        from pathlib import Path
-        import httpx
-        queue_file = Path.home() / ".projectx" / "offline_queue.json"
-        if not queue_file.exists():
-            return
-        try:
-            queue = json.loads(queue_file.read_text())
-        except Exception:
+        from services.cache_service import cache_service
+        actions = cache_service.get_offline_actions()
+        if not actions:
             return
         
-        remaining = []
-        for item in queue:
+        for item in actions:
+            action_id = item["id"]
+            action = item["action"]
+            payload = item["payload"]
             try:
-                action = item.get("action")
-                payload = item.get("payload", {})
                 if action == "rename_device":
                     self._req("PATCH", f"/api/devices/{payload['device_id']}/rename", json={"name": payload['name']})
                 elif action == "rename_lan_device":
                     self._req("PATCH", f"/api/lan-devices/{payload['lan_device_id']}/rename", json={"name": payload['name']})
-            except httpx.ConnectError:
-                remaining.append(item)
+                elif action == "toggle_trust":
+                    self._req("PATCH", f"/api/users/{payload['user_id']}/trust", json={"is_trusted": payload['is_trusted']})
+                elif action == "revoke_device_share":
+                    self._req("DELETE", f"/api/device-shares/{payload['share_id']}")
+                elif action == "change_password":
+                    self._req("POST", "/api/auth/change-password", json={"new_password": payload['new_password']})
+                
+                cache_service.remove_offline_action(action_id)
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code == 401:
+                    cache_service.remove_offline_action(action_id)
+                else:
+                    print(f"Server rejected offline action {item}: {e}")
+                    cache_service.remove_offline_action(action_id)
+            except (httpx.RequestError, OSError):
+                # Still offline
+                break
             except Exception as e:
                 print(f"Failed to sync offline action {item}: {e}")
-                
-        if remaining:
-            queue_file.write_text(json.dumps(remaining))
-        else:
-            queue_file.unlink(missing_ok=True)
 
     def get_me(self) -> dict:
         user = self._req("GET", "/api/auth/me")
@@ -121,7 +136,22 @@ class APIClient:
         return self._req("GET", "/api/devices/wg-tunnel-peers")
 
     def change_password(self, new_password: str) -> dict:
-        return self._req("POST", "/api/auth/change-password", json={"new_password": new_password})
+        try:
+            res = self._req("POST", "/api/auth/change-password", json={"new_password": new_password})
+            from services.cache_service import cache_service
+            auth_data, _ = cache_service.get_cache("_offline_auth")
+            if auth_data:
+                auth_data["password"] = new_password
+                cache_service.set_cache("_offline_auth", auth_data)
+            return res
+        except (httpx.RequestError, OSError):
+            self._queue_offline_action("change_password", {"new_password": new_password})
+            from services.cache_service import cache_service
+            auth_data, _ = cache_service.get_cache("_offline_auth")
+            if auth_data:
+                auth_data["password"] = new_password
+                cache_service.set_cache("_offline_auth", auth_data)
+            return {"message": "Queued for offline sync"}
 
     # ── Owner / Admin ─────────────────────────────────────────────
     def force_2fa_all(self) -> dict:
@@ -172,24 +202,7 @@ class APIClient:
             self.sync_offline_queue()
         except Exception:
             pass
-        devices = self._req("GET", "/api/devices/")
-        
-        # Save to offline cache
-        # pyrefly: ignore [missing-import]
-        from services.cache_service import cache_service
-        pwd = getattr(self, "_password", None)
-        usr = getattr(self, "_user", None)
-        if pwd and usr and self.token:
-            try:
-                cache_service.save({
-                    "token": self.token,
-                    "user": usr,
-                    "devices": devices
-                }, pwd)
-            except Exception as e:
-                print(f"Failed to save cache: {e}")
-                
-        return devices
+        return self._req("GET", "/api/devices/")
 
     def get_pending_devices(self) -> list:
         return self._req("GET", "/api/devices/pending")
@@ -207,8 +220,16 @@ class APIClient:
     def rename_device(self, device_id: int, name: str) -> dict:
         try:
             return self._req("PATCH", f"/api/devices/{device_id}/rename", json={"name": name})
-        except httpx.ConnectError:
+        except (httpx.RequestError, OSError):
             self._queue_offline_action("rename_device", {"device_id": device_id, "name": name})
+            from services.cache_service import cache_service
+            data, _ = cache_service.get_cache("/api/devices/")
+            if data and isinstance(data, list):
+                for d in data:
+                    if d.get("id") == device_id:
+                        d["hostname"] = name
+                        break
+                cache_service.set_cache("/api/devices/", data)
             return {"message": "Queued for offline sync"}
 
     def get_lan_devices(self, device_id: int) -> list:
@@ -217,7 +238,7 @@ class APIClient:
     def rename_lan_device(self, lan_device_id: int, name: str) -> dict:
         try:
             return self._req("PATCH", f"/api/lan-devices/{lan_device_id}/rename", json={"name": name})
-        except httpx.ConnectError:
+        except (httpx.RequestError, OSError):
             self._queue_offline_action("rename_lan_device", {"lan_device_id": lan_device_id, "name": name})
             return {"message": "Queued for offline sync"}
 
@@ -250,7 +271,19 @@ class APIClient:
         return self._req("PATCH", url, json={"new_role": "admin"})
 
     def toggle_trust(self, user_id: int, is_trusted: bool) -> dict:
-        return self._req("PATCH", f"/api/users/{user_id}/trust", json={"is_trusted": is_trusted})
+        try:
+            return self._req("PATCH", f"/api/users/{user_id}/trust", json={"is_trusted": is_trusted})
+        except (httpx.RequestError, OSError):
+            self._queue_offline_action("toggle_trust", {"user_id": user_id, "is_trusted": is_trusted})
+            from services.cache_service import cache_service
+            data, _ = cache_service.get_cache("/api/users/")
+            if data and isinstance(data, list):
+                for u in data:
+                    if u.get("id") == user_id:
+                        u["is_trusted"] = is_trusted
+                        break
+                cache_service.set_cache("/api/users/", data)
+            return {"message": "Queued for offline sync"}
 
     # ── Devices ───────────────────────────────────────────────────
     # pyrefly: ignore [bad-function-definition]
@@ -321,11 +354,18 @@ class APIClient:
     def get_device_shares(self, device_id: int) -> list:
         return self._req("GET", f"/api/device-shares/device/{device_id}")
 
+    def get_tenant_directory(self) -> list:
+        return self._req("GET", "/api/device-shares/tenant-directory")
+
     def create_device_share(self, device_id: int, target_tenant_id: int) -> dict:
         return self._req("POST", "/api/device-shares", json={"device_id": device_id, "target_tenant_id": target_tenant_id})
 
     def revoke_device_share(self, share_id: int) -> dict:
-        return self._req("DELETE", f"/api/device-shares/{share_id}")
+        try:
+            return self._req("DELETE", f"/api/device-shares/{share_id}")
+        except (httpx.RequestError, OSError):
+            self._queue_offline_action("revoke_device_share", {"share_id": share_id})
+            return {"message": "Queued for offline sync"}
 
     def download_conf(self, device_id: int) -> str:
         with httpx.Client(base_url=self.base) as client:

@@ -110,7 +110,7 @@ async def _provision_zerotier(device: Device, db: Session) -> ProvisionResult:
         if not device.network_id or not device.zerotier_node_id:
             return ProvisionResult(success=False, tunnel_type="zerotier", error="Missing network_id or zerotier_node_id")
             
-        await zerotier_controller.authorize_member(device.network_id, device.zerotier_node_id, device.name)
+        await zerotier_controller.authorize_member(device.network_id, device.zerotier_node_id, authorized=True)
         
         return ProvisionResult(
             success=True,

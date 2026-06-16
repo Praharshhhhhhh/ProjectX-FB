@@ -78,19 +78,31 @@ class _LoginWorker(QThread):
         try:
             token_data = self.api.login(self.email, self.password)
             me = self.api.get_me()
+            try:
+                from services.cache_service import cache_service
+                cache_service.set_cache("_offline_auth", {
+                    "email": self.email,
+                    "password": self.password,
+                    "token": token_data["access_token"],
+                    "user": me
+                })
+            except Exception:
+                pass
             self.success.emit(token_data, me)
         except httpx.ConnectError:
             try:
-                # pyrefly: ignore [missing-import]
                 from services.cache_service import cache_service
-                data = cache_service.load(self.password)
+                data, _ = cache_service.get_cache("_offline_auth")
                 if data and "token" in data and "user" in data:
-                    self.api.token = data["token"]
-                    self.api._password = self.password
-                    self.api._user = data["user"]
-                    self.success.emit({"access_token": data["token"], "requires_2fa": False}, data["user"])
+                    if self.email == data.get("email") and self.password == data.get("password"):
+                        self.api.token = data["token"]
+                        self.api._password = self.password
+                        self.api._user = data["user"]
+                        self.success.emit({"access_token": data["token"], "requires_2fa": False}, data["user"])
+                    else:
+                        self.error.emit("Offline: Incorrect email or password.")
                 else:
-                    self.error.emit("Offline: Incorrect password or no cache data.")
+                    self.error.emit("Offline: No cache data available.")
             except Exception as ce:
                 self.error.emit(f"Offline: Failed to load cache - {ce}")
         except httpx.HTTPStatusError as e:

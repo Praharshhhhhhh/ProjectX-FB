@@ -348,7 +348,15 @@ class DevicesPage(QWidget):
             self._tbl = make_table(headers)
             self._tbl.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
             self._tbl.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-            self._tbl.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+            hh = self._tbl.horizontalHeader()
+            for col in range(6):
+                hh.setSectionResizeMode(col, QHeaderView.ResizeMode.Fixed)
+            self._tbl.setColumnWidth(0, 170)
+            self._tbl.setColumnWidth(1, 130)
+            self._tbl.setColumnWidth(2, 200)
+            self._tbl.setColumnWidth(3, 160)
+            self._tbl.setColumnWidth(4, 90)
+            self._tbl.setColumnWidth(5, 300)
             self.card.add_widget(self._tbl)
         else:
             self._dev_scroll = QScrollArea()
@@ -418,8 +426,9 @@ class DevicesPage(QWidget):
                 
                 name_w = QWidget()
                 name_l = QHBoxLayout(name_w)
-                name_l.setContentsMargins(4, 0, 0, 0)
+                name_l.setContentsMargins(0, 0, 0, 0)
                 name_l.setSpacing(6)
+                name_l.setAlignment(Qt.AlignmentFlag.AlignCenter)
                 name_lbl = QLabel(name)
                 name_lbl.setStyleSheet("background:transparent; border:none;")
                 name_l.addWidget(name_lbl)
@@ -428,7 +437,6 @@ class DevicesPage(QWidget):
                     conflict_lbl = QLabel("Overmapping Conflict")
                     conflict_lbl.setStyleSheet("background:#fee2e2;color:#ef4444;padding:2px 4px;border-radius:4px;font-size:10px;font-weight:bold;")
                     name_l.addWidget(conflict_lbl)
-                name_l.addStretch()
                 t.setCellWidget(r, 0, name_w)
                 
                 lan_ip_val = dev.get("lan_ip") or "—"
@@ -444,22 +452,22 @@ class DevicesPage(QWidget):
                     ip_container = QWidget()
                     ip_lay = QHBoxLayout(ip_container)
                     ip_lay.setContentsMargins(0, 0, 0, 0)
-                    ip_lay.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+                    ip_lay.setAlignment(Qt.AlignmentFlag.AlignCenter)
                     ip_lay.addWidget(ip_btn)
                     t.setCellWidget(r, 1, ip_container)
                 else:
-                    t.setItem(r, 1, table_item("—"))
+                    t.setItem(r, 1, table_item("—", Qt.AlignmentFlag.AlignCenter))
 
                 conn_info = dev.get("connection_info", {})
                 ttype = conn_info.get("tunnel_type", "zerotier")
                 tun_ip = conn_info.get("virtual_ip") or "—"
                 badge = "WG" if ttype == "wireguard" else "ZT"
-                t.setItem(r, 2, table_item(f"[{badge}] {tun_ip}"))
+                t.setItem(r, 2, table_item(f"[{badge}] {tun_ip}", Qt.AlignmentFlag.AlignCenter))
                 
-                t.setItem(r, 3, table_item(dev.get("network_id") or "—"))
+                t.setItem(r, 3, table_item(dev.get("network_id") or "—", Qt.AlignmentFlag.AlignCenter))
                 status = "pending" if dev.get("_pending") else dev.get("status", "offline")
                 # pyrefly: ignore [missing-attribute]
-                t.setItem(r, 4, table_item(status.title()))
+                t.setItem(r, 4, table_item(status.title(), Qt.AlignmentFlag.AlignCenter))
 
                 btn_w = QWidget()
                 btn_l = QHBoxLayout(btn_w)
@@ -473,15 +481,36 @@ class DevicesPage(QWidget):
                     appr.clicked.connect(lambda _, did=dev["id"]: self._approve(did))
                     btn_l.addWidget(appr)
                 else:
+                    if not dev.get("is_shared"):
+                        share_btn = QPushButton("Share")
+                        share_btn.setObjectName("btn-sm")
+                        share_btn.setStyleSheet("QPushButton{background:#dbeafe;color:#1d4ed8;border:1px solid #bfdbfe;border-radius:6px;padding:5px 12px;font-size:13px} QPushButton:hover{background:#bfdbfe}")
+                        share_btn.setFixedSize(65, 30)
+                        share_btn.clicked.connect(lambda _, did=dev["id"], nm=dev.get("name", ""): self._open_share_dialog(did, nm))
+                        btn_l.addWidget(share_btn)
+
+                        shares_btn = QPushButton("Shares")
+                        shares_btn.setObjectName("btn-sm")
+                        shares_btn.setStyleSheet("QPushButton{background:#f3f4f6;color:#374151;border:1px solid #e5e7eb;border-radius:6px;padding:5px 12px;font-size:13px} QPushButton:hover{background:#e5e7eb}")
+                        shares_btn.setFixedSize(70, 30)
+                        shares_btn.clicked.connect(lambda _, did=dev["id"], nm=dev.get("name", ""): self._open_shares_view(did, nm))
+                        btn_l.addWidget(shares_btn)
+                    
+                    dl_btn = QPushButton("↓")
+                    dl_btn.setObjectName("btn-sm")
+                    dl_btn.setStyleSheet("QPushButton{background:#f1f5f9;color:#0f172a;border:1px solid #cbd5e1;border-radius:6px;padding:5px 8px;font-size:14px;font-weight:bold;} QPushButton:hover{background:#e2e8f0}")
+                    dl_btn.setFixedSize(30, 30)
+                    dl_btn.setToolTip("Download .conf")
+                    dl_btn.clicked.connect(lambda _, did=dev["id"], nm=dev.get("name", "wg_client"): self._download_conf(did, nm))
+                    btn_l.addWidget(dl_btn)
+                    
                     rem = QPushButton("Remove")
                     rem.setObjectName("btn-danger")
-                    rem.setFixedSize(85, 30)
+                    rem.setFixedSize(75, 30)
                     rem.clicked.connect(lambda _, did=dev["id"]: self._remove(did))
                     btn_l.addWidget(rem)
                 t.setCellWidget(r, 5, btn_w)
             t.setUpdatesEnabled(True)
-            from PyQt6.QtCore import QTimer
-            QTimer.singleShot(0, lambda: t.horizontalHeader().resizeSection(5, 110))
         else:
             existing_cards = {}
             for i in range(self._dev_layout.count()):
@@ -534,13 +563,196 @@ class DevicesPage(QWidget):
         while p:
             if hasattr(p, "user"): user_info = p.user; break
             p = p.parent()
-        if not _confirm_delete(self, "Remove Device", "Remove and deauthorize this device?"):
-            return
         _prompt_sensitive_action(
             self, user_info, "Remove Device",
             "Please confirm device removal",
             do_delete
         )
+
+    def _open_share_dialog(self, did: int, name: str):
+        dlg = ShareDeviceDialog(did, name, self.api, self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            self.refresh()
+
+    def _download_conf(self, did: int, name: str):
+        from PyQt6.QtWidgets import QFileDialog
+        import re
+        safe_name = re.sub(r'[^a-zA-Z0-9_-]', '_', name)
+        path, _ = QFileDialog.getSaveFileName(self, "Save WireGuard Config", f"{safe_name}.conf", "Conf Files (*.conf)")
+        if not path:
+            return
+            
+        self._dl_w = Worker(self.api.download_conf, did)
+        self._dl_w.result.connect(lambda data, p=path: self._save_conf_file(data, p))
+        self._dl_w.error.connect(self._alert.show_error)
+        self._dl_w.start()
+        
+    def _save_conf_file(self, data: str, path: str):
+        try:
+            with open(path, "w") as f:
+                f.write(data)
+            self._alert.show_success("Config downloaded successfully")
+        except Exception as e:
+            self._alert.show_error(f"Failed to save: {e}")
+
+    def _open_shares_view(self, did: int, name: str):
+        dlg = ViewSharesDialog(did, name, self.api, self)
+        dlg.exec()
+
+class ShareDeviceDialog(QDialog):
+    def __init__(self, device_id: int, device_name: str, api, parent=None):
+        super().__init__(parent)
+        self.device_id = device_id
+        self.device_name = device_name
+        self.api = api
+        self.setWindowTitle("Share Device")
+        self.setFixedSize(360, 180)
+        self.setStyleSheet("QDialog{background:white;} QLabel{background:transparent;color:#0f172a;} QLineEdit{background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:8px;font-size:13px;}")
+        self._build_ui()
+        self._load_tenants()
+
+    def _load_tenants(self):
+        self._tw = Worker(self.api.get_tenant_directory)
+        self._tw.result.connect(self._on_tenants)
+        self._tw.error.connect(lambda e: self.tenant_in.setItemText(0, "Failed to load tenants"))
+        self._tw.start()
+
+    def _on_tenants(self, tenants: list):
+        self.tenant_in.clear()
+        if not tenants:
+            self.tenant_in.addItem("No other tenants found", None)
+            return
+        self.tenant_in.addItem("— Select a Tenant —", None)
+        for t in tenants:
+            self.tenant_in.addItem(t.get("company_name", f"Tenant #{t['id']}"), t["id"])
+
+    def _build_ui(self):
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(20, 20, 20, 20)
+        lay.setSpacing(12)
+        
+        lbl = QLabel(f"Share <b>{self.device_name}</b> with another tenant.")
+        lbl.setWordWrap(True)
+        lay.addWidget(lbl)
+        
+        lay.addWidget(QLabel("Target Tenant:"))
+        self.tenant_in = QComboBox()
+        self.tenant_in.setStyleSheet("QComboBox{background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:4px;font-size:13px;}")
+        self.tenant_in.addItem("Loading...", None)
+        lay.addWidget(self.tenant_in)
+        
+        lay.addStretch()
+        
+        btns = QHBoxLayout()
+        btns.addStretch()
+        cancel = QPushButton("Cancel")
+        cancel.setStyleSheet("QPushButton{background:white;color:#475569;border:1px solid #cbd5e1;border-radius:6px;padding:6px 16px;} QPushButton:hover{background:#f1f5f9;}")
+        cancel.clicked.connect(self.reject)
+        btns.addWidget(cancel)
+        
+        self.ok_btn = QPushButton("Share")
+        self.ok_btn.setStyleSheet("QPushButton{background:#2563eb;color:white;border:none;border-radius:6px;padding:6px 16px;font-weight:bold;} QPushButton:hover{background:#1d4ed8;}")
+        self.ok_btn.clicked.connect(self._do_share)
+        btns.addWidget(self.ok_btn)
+        
+        lay.addLayout(btns)
+
+    def _do_share(self):
+        tid = self.tenant_in.currentData()
+        if tid is None:
+            QMessageBox.warning(self, "Invalid Selection", "Please select a valid tenant from the list.")
+            return
+            
+        self.ok_btn.setEnabled(False)
+        self.ok_btn.setText("Sharing...")
+        
+        self._w = Worker(self.api.create_device_share, self.device_id, tid)
+        self._w.result.connect(self._on_success)
+        self._w.error.connect(self._on_error)
+        self._w.start()
+        
+    def _on_success(self, _):
+        QMessageBox.information(self, "Success", "Device shared successfully.")
+        self.accept()
+        
+    def _on_error(self, err):
+        self.ok_btn.setEnabled(True)
+        self.ok_btn.setText("Share")
+        QMessageBox.warning(self, "Error", f"Failed to share device: {err}")
+
+class ViewSharesDialog(QDialog):
+    def __init__(self, device_id: int, device_name: str, api, parent=None):
+        super().__init__(parent)
+        self.device_id = device_id
+        self.device_name = device_name
+        self.api = api
+        self.setWindowTitle(f"Shares for {device_name}")
+        self.setFixedSize(450, 300)
+        self.setStyleSheet("QDialog{background:white;} QLabel{background:transparent;color:#0f172a;}")
+        self._build_ui()
+        self._load()
+
+    def _build_ui(self):
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(20, 20, 20, 20)
+        
+        self.tbl = QTableWidget()
+        self.tbl.setColumnCount(3)
+        self.tbl.setHorizontalHeaderLabels(["Share ID", "Shared With", "Action"])
+        self.tbl.verticalHeader().setVisible(False)
+        self.tbl.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+        self.tbl.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.tbl.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self.tbl.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
+        self.tbl.setColumnWidth(2, 120)
+        self.tbl.setStyleSheet("QTableWidget{border:1px solid #e2e8f0;border-radius:4px;}")
+        lay.addWidget(self.tbl)
+        
+        bot = QHBoxLayout()
+        bot.addStretch()
+        close_btn = QPushButton("Close")
+        close_btn.setStyleSheet("QPushButton{background:white;color:#475569;border:1px solid #cbd5e1;border-radius:6px;padding:6px 16px;} QPushButton:hover{background:#f1f5f9;}")
+        close_btn.clicked.connect(self.accept)
+        bot.addWidget(close_btn)
+        lay.addLayout(bot)
+
+    def _load(self):
+        self._w = Worker(lambda: (self.api.get_device_shares(self.device_id), self.api.get_tenant_directory()))
+        self._w.result.connect(self._on_data)
+        self._w.error.connect(lambda e: QMessageBox.warning(self, "Error", f"Could not load shares: {e}"))
+        self._w.start()
+
+    def _on_data(self, data):
+        shares, tenants = data
+        tenant_map = {t["id"]: t.get("company_name", f"Tenant #{t['id']}") for t in tenants}
+        
+        self.tbl.setRowCount(0)
+        for sh in shares:
+            r = self.tbl.rowCount()
+            self.tbl.insertRow(r)
+            
+            tid = sh.get("target_tenant_id")
+            t_name = tenant_map.get(tid, f"Tenant #{tid}")
+            
+            self.tbl.setItem(r, 0, table_item(str(sh.get("id", ""))))
+            self.tbl.setItem(r, 1, table_item(t_name))
+            
+            btn = QPushButton("Revoke")
+            btn.setStyleSheet("QPushButton{background:white;color:#dc2626;border:1px solid #fecaca;border-radius:4px;padding:4px 8px;} QPushButton:hover{background:#fee2e2;}")
+            btn.clicked.connect(lambda _, sid=sh["id"]: self._revoke(sid))
+            
+            w = QWidget()
+            l = QHBoxLayout(w)
+            l.setContentsMargins(4, 2, 4, 2)
+            l.addWidget(btn)
+            self.tbl.setCellWidget(r, 2, w)
+
+    def _revoke(self, sid: int):
+        if QMessageBox.question(self, "Confirm", "Revoke this share?", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes:
+            self._rw = Worker(self.api.revoke_device_share, sid)
+            self._rw.result.connect(lambda _: self._load())
+            self._rw.error.connect(lambda e: QMessageBox.warning(self, "Error", f"Failed to revoke: {e}"))
+            self._rw.start()
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1137,8 +1349,6 @@ class UsersPage(QWidget):
         while p:
             if hasattr(p, "user"): user_info = p.user; break
             p = p.parent()
-        if not _confirm_delete(self, "Confirm Removal", f"Remove {name}? This cannot be undone."):
-            return
         _prompt_sensitive_action(
             self, user_info, "Confirm Removal 2FA",
             "Please confirm user removal",
@@ -1780,9 +1990,36 @@ class MainWindow(QMainWindow):
             self._nav("devices")
 
         self._timer = QTimer(self)
-        # pyrefly: ignore [missing-attribute]
-        self._timer.timeout.connect(lambda: getattr(self, "_pages", {}).get(self._current_page, getattr(self, "_pages", {}).get("devices")).refresh() if hasattr(self, "_pages") and "devices" in getattr(self, "_pages", {}) else None)
+        self._timer.timeout.connect(self._do_refresh)
         self._timer.start(30000)
+
+        # Keep the banner text updated every minute
+        self._banner_timer = QTimer(self)
+        self._banner_timer.timeout.connect(self._update_offline_banner)
+        self._banner_timer.start(60000)
+
+    def _do_refresh(self):
+        page = getattr(self, "_pages", {}).get(self._current_page, getattr(self, "_pages", {}).get("devices"))
+        if page:
+            page.refresh()
+        QTimer.singleShot(1000, self._update_offline_banner)
+
+        self._sync_timer = QTimer(self)
+        self._sync_timer.timeout.connect(self._run_offline_sync)
+        self._sync_timer.start(15000)
+
+    def _run_offline_sync(self):
+        from widgets.common import Worker
+        self._sync_worker = Worker(self.api.sync_offline_queue)
+        self._sync_worker.error.connect(self._on_sync_error)
+        self._sync_worker.start()
+
+    def _on_sync_error(self, e):
+        if "Token expired while offline" in str(e):
+            from PyQt6.QtWidgets import QMessageBox
+            self._sync_timer.stop()
+            QMessageBox.critical(self, "Session Expired", "Your session has expired while offline. Please log in again to sync your changes.")
+            self._logout()
 
     def _check_user_compliance(self):
         try:
@@ -1801,21 +2038,29 @@ class MainWindow(QMainWindow):
         # pyrefly: ignore [missing-import]
         from services.network_monitor import _get_active_interface
         ip = _get_active_interface()
-        if ip is not None:
-            self._offline_banner.hide()
-            page = getattr(self, "_pages", {}).get("devices")
-            if page: page.refresh()
-        else:
+        page = getattr(self, "_pages", {}).get(self._current_page, getattr(self, "_pages", {}).get("devices"))
+        if page:
+            page.refresh()
+            
+        # Give the API request a moment to resolve and populate last_cached_at
+        QTimer.singleShot(500, self._update_offline_banner)
+        
+        # Give the API request a moment to resolve and populate last_cached_at
+        QTimer.singleShot(500, self._update_offline_banner)
+
+    def _update_offline_banner(self):
+        import time
+        is_offline = getattr(self.api, "is_offline", False)
+        if is_offline:
+            cached_at = getattr(self.api, "last_cached_at", 0)
+            if cached_at > 0:
+                mins = int((time.time() - cached_at) / 60)
+                self._offline_banner.setText(f"Offline Mode — Last synced: {mins} mins ago")
+            else:
+                self._offline_banner.setText("Offline Mode — No cached data available")
             self._offline_banner.show()
-            page = getattr(self, "_pages", {}).get("devices")
-            if page:
-                # pyrefly: ignore [missing-import]
-                from services.cache_service import cache_service
-                pwd = getattr(self.api, "_password", None)
-                if pwd:
-                    data = cache_service.load(pwd)
-                    if data and "devices" in data:
-                        page._on_devices(data["devices"])
+        else:
+            self._offline_banner.hide()
 
     def _build(self):
         root = QWidget(); root.setObjectName("root")

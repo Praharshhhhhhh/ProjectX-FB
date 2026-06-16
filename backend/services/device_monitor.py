@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from sqlalchemy.orm import Session
 # pyrefly: ignore [missing-import]
 from database import SessionLocal
@@ -21,7 +21,7 @@ async def refresh_device_statuses():
         for device in devices:
             # For wireguard: must have wg_public_key
             if device.tunnel_type == "wireguard" and device.wg_public_key:
-                now = datetime.utcnow()
+                now = datetime.now(timezone.utc).replace(tzinfo=None)
                 if device.updated_at and (now - device.updated_at) < timedelta(seconds=45):
                     if device.status != DeviceStatus.active:
                         device.status = DeviceStatus.active
@@ -36,7 +36,7 @@ async def refresh_device_statuses():
             elif device.tunnel_type == "zerotier" and device.network_id and device.zerotier_node_id:
                 # If the device has sent a heartbeat recently (within 2 minutes),
                 # mark/keep it active and bypass the ZeroTier controller check.
-                now = datetime.utcnow()
+                now = datetime.now(timezone.utc).replace(tzinfo=None)
                 if device.updated_at and (now - device.updated_at) < timedelta(seconds=45):
                     if device.status != DeviceStatus.active:
                         device.status = DeviceStatus.active

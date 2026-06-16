@@ -35,6 +35,10 @@ class WebSocketWorker(QThread):
             print("WS Message Parse Error:", e)
 
     def _on_error(self, ws, error):
+        err_str = str(error)
+        # Ignore normal close frame exceptions (opcode 8) or connection resets
+        if "fin=1 opcode=8" in err_str or "1006" in err_str or "1012" in err_str:
+            return
         print("WS Error:", error)
 
     def _on_close(self, ws, close_status_code, close_msg):

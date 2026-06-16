@@ -54,11 +54,20 @@ async def generate_keypair() -> tuple[str, str]:
     except Exception:
         return "", ""
 
+async def _save_conf(interface: str):
+    if sys.platform != "win32":
+        try:
+            proc = await asyncio.create_subprocess_exec("wg-quick", "save", interface)
+            await proc.communicate()
+        except Exception:
+            pass
+
 async def add_peer(public_key: str, allowed_ip: str, interface: str = "wg0") -> bool:
     if not allowed_ip or not public_key:
         return False
     # wg set <interface> peer <pubkey> allowed-ips <ip>/32
     res = await _run_wg("set", interface, "peer", public_key, "allowed-ips", f"{allowed_ip}/32")
+    await _save_conf(interface)
     return True
 
 async def remove_peer(public_key: str, interface: str = "wg0") -> bool:
@@ -66,6 +75,7 @@ async def remove_peer(public_key: str, interface: str = "wg0") -> bool:
         return False
     # wg set <interface> peer <pubkey> remove
     res = await _run_wg("set", interface, "peer", public_key, "remove")
+    await _save_conf(interface)
     return True
 
 async def check_peer_status(public_key: str, interface: str = "wg0") -> str:
@@ -102,16 +112,19 @@ async def get_all_peer_statuses(interface: str = "wg0") -> dict:
     return statuses
 
 def assign_ip_from_pool(db: Session, tenant_id: int) -> str:
-    # Get all used IPs
-    devices = db.query(Device).filter(Device.wg_ip.isnot(None)).all()
+    # Get all used IPs for this tenant
+    devices = db.query(Device).filter(Device.tenant_id == tenant_id, Device.wg_ip.isnot(None)).all()
     used_ips = {d.wg_ip for d in devices if d.wg_ip}
     
-    # Simple allocation from 10.0.0.2 to 10.0.0.254
+    # Use the tenant_id to determine the subnet (e.g. 10.T.0.X) to avoid collisions
+    # between tenants on the same server, or to isolate them cleanly.
+    t_subnet = (tenant_id % 254) + 1
+    
     for i in range(2, 255):
-        ip = f"10.0.0.{i}"
+        ip = f"10.{t_subnet}.0.{i}"
         if ip not in used_ips:
             return ip
-    return "10.0.0.254"
+    return f"10.{t_subnet}.0.254"
 
 def generate_client_config(private_key: str, assigned_ip: str, server_pubkey: str, server_endpoint: str) -> str:
     # If the client provides a private key, we could include it, but the instruction 

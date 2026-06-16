@@ -5,9 +5,31 @@ from typing import Dict
 
 logger = logging.getLogger(__name__)
 
+import json
+import os
+
+NAT_STATE_FILE = os.path.join(os.path.dirname(__file__), "nat_state.json")
+
+def _load_state() -> Dict[int, Dict[str, str]]:
+    if os.path.exists(NAT_STATE_FILE):
+        try:
+            with open(NAT_STATE_FILE, "r") as f:
+                data = json.load(f)
+                return {int(k): v for k, v in data.items()}
+        except Exception as e:
+            logger.error(f"Failed to load nat state: {e}")
+    return {}
+
+def _save_state(state: Dict[int, Dict[str, str]]):
+    try:
+        with open(NAT_STATE_FILE, "w") as f:
+            json.dump({str(k): v for k, v in state.items()}, f)
+    except Exception as e:
+        logger.error(f"Failed to save nat state: {e}")
+
 # In-memory store of applied rules keyed by device_id
 # Format: _applied_rules[device_id] = {"virtual_pool": str, "real_subnet": str}
-_applied_rules: Dict[int, Dict[str, str]] = {}
+_applied_rules: Dict[int, Dict[str, str]] = _load_state()
 
 async def write_iptables_nat_rule(device_id: int, virtual_pool: str, real_subnet: str) -> bool:
     if sys.platform != "linux":
@@ -35,6 +57,7 @@ async def write_iptables_nat_rule(device_id: int, virtual_pool: str, real_subnet
             return False
             
         _applied_rules[device_id] = {"virtual_pool": virtual_pool, "real_subnet": real_subnet}
+        _save_state(_applied_rules)
         return True
     except Exception as e:
         logger.error(f"write_iptables_nat_rule exception: {e}")
@@ -67,6 +90,7 @@ async def remove_iptables_nat_rule(device_id: int) -> bool:
         await p2.communicate()
 
         _applied_rules.pop(device_id, None)
+        _save_state(_applied_rules)
         return True
     except Exception as e:
         logger.error(f"remove_iptables_nat_rule exception: {e}")

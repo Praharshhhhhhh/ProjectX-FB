@@ -75,6 +75,8 @@ def icon_label(
 
 
 # ── Worker thread for API calls ───────────────────────────────────────────────
+_active_workers = set()
+
 class Worker(QThread):
     result = pyqtSignal(object)
     error = pyqtSignal(str)
@@ -84,6 +86,10 @@ class Worker(QThread):
         self._fn = fn
         self._args = args
         self._kwargs = kwargs
+
+    def start(self, *args, **kwargs):
+        _active_workers.add(self)
+        super().start(*args, **kwargs)
 
     def run(self):
         try:
@@ -98,6 +104,8 @@ class Worker(QThread):
             self.error.emit(str(msg))
         except Exception as e:
             self.error.emit(str(e))
+        finally:
+            _active_workers.discard(self)
 
 
 # ── Stat card ────────────────────────────────────────────────────────────────
