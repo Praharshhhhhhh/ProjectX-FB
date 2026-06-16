@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from datetime import datetime
 
 
@@ -17,6 +17,14 @@ class LanDeviceRename(BaseModel):
     name: str
 
 
+class ConnectionInfo(BaseModel):
+    tunnel_type: str
+    virtual_ip: Optional[str]
+    status: str
+    conf_download_url: Optional[str] = None
+    network_id: Optional[str] = None
+    node_id: Optional[str] = None
+
 class DeviceOut(BaseModel):
     id: int
     name: str
@@ -33,6 +41,8 @@ class DeviceOut(BaseModel):
     tenant_id: int
     lan_devices: List[LanDeviceOut] = []
     created_at: datetime
+    connection_info: Optional[ConnectionInfo] = None
+    has_conflict: bool = False
 
     class Config:
         from_attributes = True
@@ -49,10 +59,11 @@ class DeviceRegister(BaseModel):
     zerotier_ip: Optional[str] = None
     lan_ip: Optional[str] = None
     lan_subnet: Optional[str] = None
+    device_capability: Optional[Dict[str, Any]] = None
 
 
 class WgDeviceRegister(BaseModel):
-    wg_public_key: str
+    wg_public_key: Optional[str] = None
     hostname: str = "Unknown Device"
     lan_ip: Optional[str] = None
 

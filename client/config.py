@@ -7,7 +7,7 @@ _ROOT = os.path.dirname(_HERE)
 # Single project-root .env takes priority; local client/.env is a fallback.
 # load_dotenv does not override already-set vars, so the root file wins.
 load_dotenv(os.path.join(_ROOT, ".env"))
-load_dotenv(os.path.join(_HERE, ".env"))
+load_dotenv(os.path.join(_HERE, ".env"), override=True)
 
 BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8001")
 APP_NAME = os.getenv("APP_NAME", "ProjectX")

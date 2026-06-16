@@ -1,4 +1,4 @@
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 from database import get_db
@@ -9,6 +9,7 @@ bearer = HTTPBearer(auto_error=False)
 
 
 def get_current_user(
+    request: Request,
     credentials: HTTPAuthorizationCredentials = Depends(bearer),
     db: Session = Depends(get_db),
 ) -> User:
@@ -20,6 +21,11 @@ def get_current_user(
     user = get_user_by_id(db, payload.get("user_id"))
     if not user or not user.is_active:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
+        
+    client_uuid = request.headers.get("X-User-Identifier")
+    if client_uuid and client_uuid != user.uuid:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session identifier mismatch")
+        
     return user
 
 

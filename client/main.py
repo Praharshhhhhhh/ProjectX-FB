@@ -78,7 +78,7 @@ class App:
             self._show_2fa_setup()
         else:
             role = me.get("role")
-            if role in ("master", "second_master") and not me.get("network_id"):
+            if role in ("master", "second_master") and not (me.get("network_id") or me.get("has_wg_server")):
                 self._show_claim_network()
             else:
                 self._show_main()
@@ -96,7 +96,7 @@ class App:
     def _after_2fa(self):
         self._user_info = api.get_me()
         role = self._user_info.get("role")
-        if role in ("master", "second_master") and not self._user_info.get("network_id"):
+        if role in ("master", "second_master") and not (self._user_info.get("network_id") or self._user_info.get("has_wg_server")):
             self._show_claim_network()
         else:
             self._show_main()
@@ -108,8 +108,7 @@ class App:
 
     # ── Main portal ───────────────────────────────────────────────
     def _show_main(self):
-        if not self._user_info:
-            self._user_info = api.get_me()
+        self._user_info = api.get_me()
 
         network_id = self._user_info.get("network_id")
         
@@ -122,15 +121,15 @@ class App:
             # pyrefly: ignore [missing-import]
             from services import zerotier_local as tunnel
 
-        if network_id:
+        role = self._user_info.get("role")
+        has_wg_server = self._user_info.get("has_wg_server")
+
+        if network_id or (TUNNEL_MODE == "wireguard" and role != "system_owner" and has_wg_server):
             import threading
             import socket
             import time
 
             if TUNNEL_MODE == "wireguard":
-                priv, pub = tunnel.get_or_create_keypair()
-                node_id = pub
-                
                 # Check if interface is running, if not, register and connect
                 if not tunnel.is_wireguard_running():
                     try:
@@ -138,30 +137,57 @@ class App:
                         # pyrefly: ignore [missing-import]
                         from services.network_monitor import _get_active_interface
                         lan_ip = _get_active_interface()
-                        res = api._req("POST", "/api/devices/wg-register", json={
-                            "wg_public_key": pub,
+                        existing_priv, existing_pub = tunnel.get_or_create_keypair()
+                        req_data = {
                             "hostname": socket.gethostname(),
                             "lan_ip": lan_ip
-                        })
+                        }
+                        if existing_pub:
+                            req_data["wg_public_key"] = existing_pub
+                            
+                        res = api._req("POST", "/api/devices/wg-register", json=req_data)
                         config_str = res.get("config")
                         assigned_ip = res.get("assigned_ip")
                         server_pubkey = res.get("server_pubkey")
                         server_endpoint = res.get("server_endpoint")
+                        server_endpoint_secondary = res.get("server_endpoint_secondary")
+                        priv = res.get("private_key") or existing_priv
+                        device_id = res.get("device_id")
                         
-                        if server_pubkey and assigned_ip:
+                        if server_pubkey and assigned_ip and priv:
                             import os
                             # pyrefly: ignore [missing-import]
                             from config import WG_CONFIG_DIR, WG_INTERFACE
                             config_path = os.path.join(WG_CONFIG_DIR, f"{WG_INTERFACE}.conf")
                             success = tunnel.write_config(priv, assigned_ip, server_pubkey, server_endpoint, config_path)
+                            
+                            import json
+                            failover_path = os.path.join(WG_CONFIG_DIR, "failover.json")
+                            if server_endpoint_secondary:
+                                with open(failover_path, "w") as f:
+                                    json.dump({
+                                        "primary": server_endpoint,
+                                        "secondary": server_endpoint_secondary,
+                                        "current": "primary",
+                                        "priv": priv,
+                                        "assigned_ip": assigned_ip,
+                                        "server_pubkey": server_pubkey
+                                    }, f)
+                            else:
+                                if os.path.exists(failover_path):
+                                    os.remove(failover_path)
+
                             if success:
                                 tunnel.connect(WG_INTERFACE)
                             else:
                                 print(f"Failed to write config to {config_path}")
                         else:
-                            print("WireGuard registration error: Backend did not return a valid server public key or IP. (Is the wg0 interface running on the server?)")
+                            print("WireGuard registration error: Backend did not return valid details. (Is the wg0 interface running on the server?)")
                     except Exception as e:
                         print("WireGuard registration failed:", e)
+
+                priv, pub = tunnel.get_or_create_keypair()
+                node_id = pub
             else:
                 if tunnel.is_zerotier_running():
                     node_info = tunnel.get_node_info()
@@ -172,8 +198,9 @@ class App:
             if node_id:
                 def _do_heartbeat():
                     try:
-                        tun_ip = tunnel.get_network_ip(network_id)
-                        api.register_device(node_id, network_id, zt_ip=tun_ip, hostname=socket.gethostname())
+                        tun_ip = tunnel.get_network_ip(network_id) if not TUNNEL_MODE == "wireguard" else ""
+                        if TUNNEL_MODE != "wireguard":
+                            api.register_device(node_id, network_id, zt_ip=tun_ip, hostname=socket.gethostname())
                     except Exception:
                         pass
                     while True:
@@ -192,6 +219,26 @@ class App:
                             tun_ip = tunnel.get_network_ip(target_id)
                             tun_status = tunnel.get_status(target_id)
                             
+                            if tun_status == "disconnected" and TUNNEL_MODE == "wireguard":
+                                import os, json
+                                from config import WG_CONFIG_DIR, WG_INTERFACE
+                                failover_path = os.path.join(WG_CONFIG_DIR, "failover.json")
+                                if os.path.exists(failover_path):
+                                    with open(failover_path, "r") as f:
+                                        fdata = json.load(f)
+                                    
+                                    new_target = "secondary" if fdata.get("current") == "primary" else "primary"
+                                    ep = fdata.get(new_target)
+                                    if ep:
+                                        fdata["current"] = new_target
+                                        with open(failover_path, "w") as f:
+                                            json.dump(fdata, f)
+                                            
+                                        config_path = os.path.join(WG_CONFIG_DIR, f"{WG_INTERFACE}.conf")
+                                        tunnel.write_config(fdata["priv"], fdata["assigned_ip"], fdata["server_pubkey"], ep, config_path)
+                                        tunnel.disconnect(WG_INTERFACE)
+                                        tunnel.connect(WG_INTERFACE)
+
                             if tun_status == "connected":
                                 api.send_heartbeat(
                                     node_id=node_id,
@@ -216,6 +263,7 @@ class App:
     def _on_logout(self):
         self._user_info = {}
         self._token_data = {}
+        api.logout()
         # pyrefly: ignore [missing-import]
         from services.websocket_client import ws_client
         ws_client.disconnect_ws()

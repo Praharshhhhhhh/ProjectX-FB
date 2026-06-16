@@ -24,6 +24,7 @@ class Tenant(Base):
     status = Column(Enum(TenantStatus), default=TenantStatus.pending)
     wg_server_public_key = Column(String, nullable=True)
     wg_server_endpoint = Column(String, nullable=True)
+    wg_server_endpoint_secondary = Column(String, nullable=True)
     wg_server_interface = Column(String, nullable=True, default="wg0")
     # pyrefly: ignore [deprecated]
     created_at = Column(DateTime, default=datetime.utcnow)

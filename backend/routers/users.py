@@ -19,6 +19,7 @@ from services.audit_service import log
 from models.audit_log import AuditLevel
 import secrets
 import string
+import uuid
 
 router = APIRouter(prefix="/api/users", tags=["users"])
 
@@ -63,6 +64,7 @@ def create_user(req: UserCreate, current_user: Annotated[User, Depends(require_m
         hashed_password=hash_password(password),
         role=UserRole(req.role),
         must_change_password=True,
+        uuid=uuid.uuid4().hex
     )
     db.add(user)
     db.commit()

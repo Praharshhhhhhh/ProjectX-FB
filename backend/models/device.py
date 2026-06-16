@@ -33,6 +33,12 @@ class Device(Base):
     lan_ip = Column(String, nullable=True)
     lan_subnet = Column(String, nullable=True)
     network_id = Column(String, nullable=True)
+    device_capability = Column(String, nullable=True)
+    forced_tunnel_type = Column(String, nullable=True)
+    re_provision_requested = Column(Integer, default=0, nullable=False)
+    wg_private_key = Column(String, nullable=True)
+    nat_virtual_pool = Column(String, nullable=True)
+    
     status = Column(Enum(DeviceStatus), default=DeviceStatus.pending)
     is_approved = Column(Boolean, default=False)
     # pyrefly: ignore [deprecated]

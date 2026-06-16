@@ -27,24 +27,48 @@ async def _run_wg(*args) -> str:
     except Exception:
         return ""
 
-async def get_server_public_key() -> str:
-    return await _run_wg("show", "wg-server", "public-key")
+async def get_server_public_key(interface: str = "wg0") -> str:
+    return await _run_wg("show", interface, "public-key")
 
-async def add_peer(public_key: str, allowed_ip: str) -> bool:
+async def generate_keypair() -> tuple[str, str]:
+    try:
+        priv_proc = await asyncio.create_subprocess_exec(
+            WG_CMD, "genkey",
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+        )
+        priv_out, _ = await priv_proc.communicate()
+        priv_key = priv_out.decode().strip()
+        
+        if not priv_key:
+            return "", ""
+            
+        pub_proc = await asyncio.create_subprocess_exec(
+            WG_CMD, "pubkey",
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+        )
+        pub_out, _ = await pub_proc.communicate(input=priv_key.encode())
+        pub_key = pub_out.decode().strip()
+        
+        return priv_key, pub_key
+    except Exception:
+        return "", ""
+
+async def add_peer(public_key: str, allowed_ip: str, interface: str = "wg0") -> bool:
     if not allowed_ip or not public_key:
         return False
-    # wg set wg-server peer <pubkey> allowed-ips <ip>/32
-    res = await _run_wg("set", "wg-server", "peer", public_key, "allowed-ips", f"{allowed_ip}/32")
+    # wg set <interface> peer <pubkey> allowed-ips <ip>/32
+    res = await _run_wg("set", interface, "peer", public_key, "allowed-ips", f"{allowed_ip}/32")
     return True
 
-async def remove_peer(public_key: str) -> bool:
+async def remove_peer(public_key: str, interface: str = "wg0") -> bool:
     if not public_key:
         return False
-    # wg set wg-server peer <pubkey> remove
-    res = await _run_wg("set", "wg-server", "peer", public_key, "remove")
+    # wg set <interface> peer <pubkey> remove
+    res = await _run_wg("set", interface, "peer", public_key, "remove")
     return True
 
-async def check_peer_status(public_key: str, interface: str = "wg-server") -> str:
+async def check_peer_status(public_key: str, interface: str = "wg0") -> str:
     if not public_key:
         return "offline"
     dump = await _run_wg("show", interface, "dump")
@@ -60,7 +84,7 @@ async def check_peer_status(public_key: str, interface: str = "wg-server") -> st
             return "offline"
     return "offline"
 
-async def get_all_peer_statuses(interface: str = "wg-server") -> dict:
+async def get_all_peer_statuses(interface: str = "wg0") -> dict:
     statuses = {}
     dump = await _run_wg("show", interface, "dump")
     for line in dump.split("\n"):

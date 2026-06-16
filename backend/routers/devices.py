@@ -1,11 +1,12 @@
-from typing import Annotated
+from typing import Annotated, Optional
 from pydantic import BaseModel
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi.responses import PlainTextResponse
 from sqlalchemy.orm import Session
 # pyrefly: ignore [missing-import]
 from database import get_db
 # pyrefly: ignore [missing-import]
-from models import User, Device, UserRole
+from models import User, Device, UserRole, AuditLevel, Tenant
 # pyrefly: ignore [missing-import]
 from models.device import DeviceStatus
 # pyrefly: ignore [missing-import]
@@ -27,8 +28,52 @@ from models.audit_log import AuditLevel
 import asyncio
 # pyrefly: ignore [missing-import]
 from services.websocket_manager import manager
+from services.tunnel_dispatcher import decide_tunnel_type, provision_device, deprovision_device
+from services.nat_engine import write_iptables_nat_rule, remove_iptables_nat_rule
+import json
+from fastapi.responses import PlainTextResponse, Response
 
 router = APIRouter(prefix="/api/devices", tags=["devices"])
+
+def check_subnet_overlap(new_subnet: str, device_id: int, db: Session) -> list[Device]:
+    if not new_subnet:
+        return []
+    others = db.query(Device).filter(
+        Device.id != device_id,
+        Device.lan_subnet.isnot(None),
+        Device.lan_subnet == new_subnet
+    ).all()
+    return others
+
+def assign_next_nat_pool(db: Session) -> str:
+    used_pools = db.query(Device.nat_virtual_pool).filter(Device.nat_virtual_pool.isnot(None)).all()
+    used_prefixes = {p[0] for p in used_pools if p[0]}
+    
+    for i in range(1, 255):
+        pool = f"10.50.{i}"
+        if pool not in used_prefixes:
+            return pool
+    return "10.50.254"
+
+async def _handle_subnet_overlap(device: Device, db: Session):
+    if not device.lan_subnet:
+        return
+    overlaps = check_subnet_overlap(device.lan_subnet, device.id, db)
+    if overlaps:
+        if device.tunnel_type == "wireguard":
+            if not device.nat_virtual_pool:
+                virtual_pool = assign_next_nat_pool(db)
+                await write_iptables_nat_rule(device.id, virtual_pool, device.lan_subnet)
+                device.nat_virtual_pool = virtual_pool
+                db.commit()
+        else:
+            overlap_ids = [o.id for o in overlaps]
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(
+                f"ZeroTier_Conflict_Alert: device {device.id} subnet {device.lan_subnet} "
+                f"overlaps with {overlap_ids}. Manual review required."
+            )
 
 
 def _user_can_see(user: User, device: Device, db: Session) -> bool:
@@ -108,6 +153,7 @@ async def register_device(req: DeviceRegister, db: Annotated[Session, Depends(ge
         zerotier_ip=req.zerotier_ip,
         lan_ip=req.lan_ip,
         lan_subnet=req.lan_subnet,
+        device_capability=json.dumps(req.device_capability) if hasattr(req, "device_capability") and req.device_capability else None,
         status=DeviceStatus.pending,
         is_approved=False,
     )
@@ -123,27 +169,43 @@ async def register_device(req: DeviceRegister, db: Annotated[Session, Depends(ge
 
 @router.post("/wg-register")
 async def register_wg_device(req: WgDeviceRegister, current_user: Annotated[User, Depends(get_current_user)], db: Annotated[Session, Depends(get_db)]):
-    existing = db.query(Device).filter(Device.wg_public_key == req.wg_public_key).first()
-    if existing:
-        server_pubkey = await wireguard_controller.get_server_public_key()
-        server_endpoint = getattr(wireguard_controller, "WG_SERVER_ENDPOINT", "127.0.0.1:51820")
-        config_str = wireguard_controller.generate_client_config("", existing.wg_ip, server_pubkey, server_endpoint)
-        return {
-            "assigned_ip": existing.wg_ip,
-            "server_pubkey": server_pubkey,
-            "server_endpoint": server_endpoint,
-            "config": config_str
-        }
+    from models import Tenant
+    tenant = db.query(Tenant).filter(Tenant.id == current_user.tenant_id).first()
+    from config import get_settings
+    settings = get_settings()
+    server_endpoint = tenant.wg_server_endpoint if tenant and tenant.wg_server_endpoint else getattr(settings, "WG_SERVER_ENDPOINT", "127.0.0.1:51820")
+    server_endpoint_secondary = tenant.wg_server_endpoint_secondary if tenant and tenant.wg_server_endpoint_secondary else getattr(settings, "WG_SERVER_ENDPOINT_SECONDARY", "")
+
+    if req.wg_public_key:
+        existing = db.query(Device).filter(Device.wg_public_key == req.wg_public_key).first()
+        if existing:
+            server_pubkey = tenant.wg_server_public_key if tenant and tenant.wg_server_public_key else await wireguard_controller.get_server_public_key(interface=tenant.wg_server_interface if tenant else "wg0")
+            config_str = wireguard_controller.generate_client_config("", existing.wg_ip, server_pubkey, server_endpoint)
+            return {
+                "assigned_ip": existing.wg_ip,
+                "server_pubkey": server_pubkey,
+                "server_endpoint": server_endpoint,
+                "server_endpoint_secondary": server_endpoint_secondary,
+                "config": config_str,
+                "private_key": ""
+            }
+
+    priv_key = ""
+    pub_key = req.wg_public_key
+    if not pub_key:
+        priv_key, pub_key = await wireguard_controller.generate_keypair()
+
+    if not pub_key:
+        raise HTTPException(status_code=500, detail="WireGuard server could not generate keypair. Is WireGuard installed on the server?")
 
     assigned_ip = wireguard_controller.assign_ip_from_pool(db, current_user.tenant_id)
-    server_pubkey = await wireguard_controller.get_server_public_key()
-    server_endpoint = getattr(wireguard_controller, "WG_SERVER_ENDPOINT", "127.0.0.1:51820")
-    config_str = wireguard_controller.generate_client_config("", assigned_ip, server_pubkey, server_endpoint)
+    server_pubkey = await wireguard_controller.get_server_public_key(interface=tenant.wg_server_interface if tenant else "wg0")
+    config_str = wireguard_controller.generate_client_config(priv_key, assigned_ip, server_pubkey, server_endpoint)
     
     device = Device(
         tenant_id=current_user.tenant_id,
         owner_id=current_user.id,
-        wg_public_key=req.wg_public_key,
+        wg_public_key=pub_key,
         wg_ip=assigned_ip,
         lan_ip=req.lan_ip,
         name=req.hostname,
@@ -154,7 +216,7 @@ async def register_wg_device(req: WgDeviceRegister, current_user: Annotated[User
     db.add(device)
     db.commit()
     db.refresh(device)
-    log(db, "device_registered", f"New WireGuard device {req.wg_public_key[:8]}... registered",
+    log(db, "device_registered", f"New WireGuard device {pub_key[:8]}... registered",
         tenant_id=current_user.tenant_id, level=AuditLevel.info)
     
     await manager.broadcast_to_tenant(current_user.tenant_id, {"event": "device_updated", "device": _device_dict(device)})
@@ -163,13 +225,19 @@ async def register_wg_device(req: WgDeviceRegister, current_user: Annotated[User
         "assigned_ip": assigned_ip,
         "server_pubkey": server_pubkey,
         "server_endpoint": server_endpoint,
-        "config": config_str
+        "server_endpoint_secondary": server_endpoint_secondary,
+        "config": config_str,
+        "private_key": priv_key,
+        "device_id": device.id if 'device' in locals() else existing.id
     }
 
 
 @router.post("/heartbeat")
 async def device_heartbeat(req: DeviceRegister, db: Annotated[Session, Depends(get_db)]):
-    device = db.query(Device).filter(Device.zerotier_node_id == req.zerotier_node_id).first()
+    device = db.query(Device).filter(
+        (Device.zerotier_node_id == req.zerotier_node_id) | 
+        (Device.wg_public_key == req.zerotier_node_id)
+    ).first()
     if not device:
         return await register_device(req, db)
 
@@ -182,6 +250,9 @@ async def device_heartbeat(req: DeviceRegister, db: Annotated[Session, Depends(g
         device.lan_subnet = req.lan_subnet
     if req.hostname:
         device.name = req.hostname
+    if hasattr(req, "device_capability") and req.device_capability:
+        device.device_capability = json.dumps(req.device_capability)
+        
     if device.is_approved:
         device.status = DeviceStatus.active
         
@@ -191,6 +262,8 @@ async def device_heartbeat(req: DeviceRegister, db: Annotated[Session, Depends(g
     device.updated_at = datetime.utcnow()
     
     db.commit()
+    await _handle_subnet_overlap(device, db)
+    
     db.refresh(device)
     await manager.broadcast_to_tenant(device.tenant_id, {"event": "device_updated", "device": _device_dict(device)})
     return {"message": "Heartbeat received", "device_id": device.id}
@@ -231,6 +304,7 @@ async def get_wg_tunnel_peers(
     
     return {
         "server_endpoint": tenant.wg_server_endpoint,
+        "server_endpoint_secondary": tenant.wg_server_endpoint_secondary,
         "server_public_key": tenant.wg_server_public_key,
         "server_interface": tenant.wg_server_interface,
         "peers": peers,
@@ -247,10 +321,24 @@ async def approve_device(device_id: int, current_user: Annotated[User, Depends(r
     if device.is_approved:
         raise HTTPException(status_code=400, detail="Already approved")
 
+    capability = json.loads(device.device_capability or "{}")
+    new_tunnel_type = await decide_tunnel_type(capability, device.forced_tunnel_type)
+    if device.tunnel_type == "wireguard" and not device.forced_tunnel_type:
+        new_tunnel_type = "wireguard"
+    device.tunnel_type = new_tunnel_type
+    db.commit()
+
+    result = await provision_device(device, db)
+    if not result.success:
+        raise HTTPException(status_code=500, detail=f"Provisioning failed: {result.error}")
+
     if device.tunnel_type == "wireguard":
-        await wireguard_controller.add_peer(device.wg_public_key, device.wg_ip)
-    elif device.network_id and device.zerotier_node_id:
-        await authorize_member(device.network_id, device.zerotier_node_id, True)
+        device.wg_ip = result.wg_ip
+        device.wg_public_key = result.wg_public_key
+        device.wg_private_key = result.wg_private_key
+    elif device.tunnel_type == "zerotier":
+        device.network_id = result.network_id
+        device.zerotier_node_id = result.zerotier_node_id
 
     device.is_approved = True
     device.status = DeviceStatus.active
@@ -289,10 +377,10 @@ async def remove_device(device_id: int, current_user: Annotated[User, Depends(re
     device = db.query(Device).filter(Device.id == device_id, Device.tenant_id == current_user.tenant_id).first()
     if not device:
         raise HTTPException(status_code=404, detail="Device not found")
-    if device.tunnel_type == "wireguard":
-        await wireguard_controller.remove_peer(device.wg_public_key)
-    elif device.network_id and device.zerotier_node_id:
-        await authorize_member(device.network_id, device.zerotier_node_id, False)
+        
+    await deprovision_device(device)
+    await remove_iptables_nat_rule(device.id)
+    
     log(db, "device_removed", f"Device '{device.name}' removed",
         tenant_id=current_user.tenant_id, user_id=current_user.id,
         user_name=current_user.full_name, level=AuditLevel.warning)
@@ -315,6 +403,84 @@ async def rename_device(device_id: int, name: str, current_user: Annotated[User,
     await manager.broadcast_to_tenant(current_user.tenant_id, {"event": "device_updated", "device": _device_dict(device)})
     return {"message": "Renamed"}
 
+class ReprovisionReq(BaseModel):
+    forced_tunnel_type: str
+    re_provision_requested: bool
+
+@router.patch("/{device_id}")
+async def reprovision_device(
+    device_id: int,
+    req: ReprovisionReq,
+    current_user: Annotated[User, Depends(require_master_or_above)],
+    db: Annotated[Session, Depends(get_db)]
+):
+    device = db.query(Device).filter(Device.id == device_id, Device.tenant_id == current_user.tenant_id).first()
+    if not device:
+        raise HTTPException(status_code=404, detail="Device not found")
+        
+    if req.re_provision_requested:
+        device.forced_tunnel_type = req.forced_tunnel_type
+        device.re_provision_requested = True
+        
+        # Deprovision old tunnel
+        await deprovision_device(device)
+        await remove_iptables_nat_rule(device.id)
+        
+        # Provision new tunnel
+        capability = json.loads(device.device_capability or "{}")
+        tunnel_type = await decide_tunnel_type(capability, device.forced_tunnel_type)
+        device.tunnel_type = tunnel_type
+        db.commit()
+        
+        result = await provision_device(device, db)
+        if not result.success:
+            raise HTTPException(status_code=500, detail=f"Provisioning failed: {result.error}")
+            
+        if device.tunnel_type == "wireguard":
+            device.wg_ip = result.wg_ip
+            device.wg_public_key = result.wg_public_key
+            device.wg_private_key = result.wg_private_key
+            device.network_id = None
+            device.zerotier_node_id = None
+        elif device.tunnel_type == "zerotier":
+            device.network_id = result.network_id
+            device.zerotier_node_id = result.zerotier_node_id
+            device.wg_public_key = None
+            device.wg_private_key = None
+            device.wg_ip = None
+            
+        device.re_provision_requested = False
+        db.commit()
+        
+        await _handle_subnet_overlap(device, db)
+        await manager.broadcast_to_tenant(current_user.tenant_id, {"event": "device_updated", "device": _device_dict(device)})
+        
+    return {"message": "Reprovisioned"}
+
+@router.get("/{device_id}/conf", response_class=PlainTextResponse)
+async def get_device_conf(device_id: int, current_user: Annotated[User, Depends(get_current_user)], db: Annotated[Session, Depends(get_db)]):
+    device = db.query(Device).filter(Device.id == device_id).first()
+    if not device or not _user_can_see(current_user, device, db):
+        raise HTTPException(status_code=404, detail="Device not found")
+    if device.tunnel_type != "wireguard":
+        raise HTTPException(403, "Not a WireGuard device")
+    # private key might be absent if device registered its own public key
+    
+    from config import get_settings
+    settings = get_settings()
+    tenant = db.query(Tenant).filter(Tenant.id == device.tenant_id).first()
+    server_pubkey = await wireguard_controller.get_server_public_key(interface=tenant.wg_server_interface if tenant else "wg0")
+    server_endpoint = tenant.wg_server_endpoint if tenant and tenant.wg_server_endpoint else getattr(settings, "WG_SERVER_ENDPOINT", "127.0.0.1:51820")
+    
+    conf = wireguard_controller.generate_client_config(
+        private_key=device.wg_private_key,
+        assigned_ip=device.wg_ip,
+        server_pubkey=server_pubkey,
+        server_endpoint=server_endpoint
+    )
+    return Response(content=conf, media_type="text/plain",
+        headers={"Content-Disposition": f'attachment; filename="{device.name}.conf"'})
+
 
 @router.get("/{device_id}/connect")
 # pyrefly: ignore [bad-function-definition]
@@ -328,7 +494,7 @@ def connect_device(device_id: int, current_user: Annotated[User, Depends(get_cur
 
 class SyncToggleReq(BaseModel):
     connect: bool
-    network_id: str
+    network_id: Optional[str] = None
 
 @router.post("/{device_id}/sync-toggle")
 async def sync_device_toggle(
@@ -355,7 +521,33 @@ async def sync_device_toggle(
     })
     return {"message": "Sync toggle broadcasted"}
 
+class SyncStatusReq(BaseModel):
+    status: str
 
+@router.post("/{device_id}/status")
+async def sync_device_status(
+    device_id: int,
+    req: SyncStatusReq,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)]
+):
+    device = db.query(Device).filter(Device.id == device_id).first()
+    if not device or not _user_can_see(current_user, device, db):
+        raise HTTPException(status_code=404, detail="Device not found")
+        
+    try:
+        device.status = DeviceStatus(req.status)
+    except ValueError:
+        pass
+        
+    db.commit()
+    db.refresh(device)
+    
+    await manager.broadcast_to_tenant(current_user.tenant_id, {
+        "event": "device_updated",
+        "device": _device_dict(device)
+    })
+    return {"message": "Status updated"}
 class NetworkModeReq(BaseModel):
     is_layer2: bool
 
@@ -385,9 +577,28 @@ async def change_network_mode(
 
 
 def _device_dict(d: Device, hide_network: bool = False) -> dict:
+    virtual_ip = d.wg_ip if d.tunnel_type == "wireguard" else d.zerotier_ip
+    conf_url = f"/api/devices/{d.id}/conf" if d.tunnel_type == "wireguard" else None
+    
+    connection_info = {
+        "tunnel_type": d.tunnel_type or "unknown",
+        "virtual_ip": virtual_ip,
+        "status": d.status.value if hasattr(d.status, "value") else str(d.status),
+        "conf_download_url": conf_url,
+        "network_id": d.network_id if d.tunnel_type == "zerotier" else None,
+        "node_id": d.zerotier_node_id if d.tunnel_type == "zerotier" else None,
+    }
+    
+    from sqlalchemy.orm import object_session
+    db = object_session(d)
+    has_conflict = False
+    if db and d.lan_subnet and d.tunnel_type != "wireguard":
+        has_conflict = len(check_subnet_overlap(d.lan_subnet, d.id, db)) > 0
+    
     return {
         "id": d.id, "name": d.name,
         "zerotier_node_id": d.zerotier_node_id,
+        "wg_public_key": d.wg_public_key,
         "zerotier_ip": d.zerotier_ip,
         "wg_ip": d.wg_ip,
         "lan_ip": d.lan_ip, "lan_subnet": d.lan_subnet,
@@ -395,5 +606,7 @@ def _device_dict(d: Device, hide_network: bool = False) -> dict:
         "is_approved": d.is_approved, "tenant_id": d.tenant_id,
         "created_at": d.created_at.isoformat() if d.created_at else None,
         "lan_devices": [{"id": l.id, "name": l.name, "ip_address": l.ip_address, "mac_address": l.mac_address} for l in d.lan_devices],
-        "is_shared": hide_network
+        "is_shared": hide_network,
+        "connection_info": connection_info,
+        "has_conflict": has_conflict
     }

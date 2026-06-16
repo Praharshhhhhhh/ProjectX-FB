@@ -27,6 +27,8 @@ projectx.db
 
 # ─── Logs / runtime output ───
 *.log
+uvicorn.log
+debug.txt
 server_err.txt
 server_out.txt
 **/server_err.txt

@@ -21,7 +21,7 @@ class ClaimNetworkWindow(QWidget):
     def __init__(self, api):
         super().__init__()
         self.api = api
-        self.setFixedSize(480, 500)
+        self.setFixedSize(480, 650)
         self.is_centered_view = True
         self.setStyleSheet(STYLE)
         self._build_ui()
@@ -98,18 +98,30 @@ class ClaimNetworkWindow(QWidget):
         layout.addWidget(pub_lbl)
 
         self.wg_pub_input = QLineEdit()
+        self.wg_pub_input.setFixedHeight(38)
         self.wg_pub_input.setPlaceholderText("44-character base64 public key")
         self.wg_pub_input.setMaxLength(44)
         layout.addWidget(self.wg_pub_input)
         layout.addSpacing(12)
 
-        end_lbl = QLabel("Server Endpoint")
+        end_lbl = QLabel("Server Endpoint (Primary)")
         end_lbl.setStyleSheet("color:#8b949e;font-size:12px;margin-bottom:2px")
         layout.addWidget(end_lbl)
 
         self.wg_end_input = QLineEdit()
+        self.wg_end_input.setFixedHeight(38)
         self.wg_end_input.setPlaceholderText("e.g. 203.0.113.5:51820")
         layout.addWidget(self.wg_end_input)
+        layout.addSpacing(12)
+        
+        sec_end_lbl = QLabel("Server Endpoint (Secondary / Failover)")
+        sec_end_lbl.setStyleSheet("color:#8b949e;font-size:12px;margin-bottom:2px")
+        layout.addWidget(sec_end_lbl)
+
+        self.wg_sec_end_input = QLineEdit()
+        self.wg_sec_end_input.setFixedHeight(38)
+        self.wg_sec_end_input.setPlaceholderText("Optional e.g. 198.51.100.2:51820")
+        layout.addWidget(self.wg_sec_end_input)
         layout.addSpacing(12)
         
         iface_lbl = QLabel("Interface Name (Optional)")
@@ -117,6 +129,7 @@ class ClaimNetworkWindow(QWidget):
         layout.addWidget(iface_lbl)
 
         self.wg_iface_input = QLineEdit()
+        self.wg_iface_input.setFixedHeight(38)
         self.wg_iface_input.setText("wg0")
         self.wg_iface_input.setPlaceholderText("wg0")
         layout.addWidget(self.wg_iface_input)
@@ -159,6 +172,7 @@ class ClaimNetworkWindow(QWidget):
     def _do_wg_claim(self):
         pubkey = self.wg_pub_input.text().strip()
         endpoint = self.wg_end_input.text().strip()
+        endpoint_sec = self.wg_sec_end_input.text().strip()
         iface = self.wg_iface_input.text().strip() or "wg0"
 
         if not pubkey or not endpoint:
@@ -181,7 +195,7 @@ class ClaimNetworkWindow(QWidget):
         self.error_label.hide()
         
         try:
-            self.api.claim_wg_server(pubkey, endpoint, iface)
+            self.api.claim_wg_server(pubkey, endpoint, endpoint_sec, iface)
             self.claim_success.emit()
         except httpx.HTTPStatusError as e:
             try:

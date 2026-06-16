@@ -17,6 +17,8 @@ class APIClient:
         h = {"Content-Type": "application/json"}
         if self.token:
             h["Authorization"] = f"Bearer {self.token}"
+        if getattr(self, "_user_uuid", None):
+            h["X-User-Identifier"] = self._user_uuid
         return h
 
     def _req(self, method: str, path: str, **kwargs):
@@ -27,10 +29,17 @@ class APIClient:
 
     # ── Auth ──────────────────────────────────────────────────────
     def login(self, email: str, password: str) -> dict:
+        self._user_uuid = None
         data = self._req("POST", "/api/auth/login", json={"email": email, "password": password})
         self.token = data["access_token"]
         self._password = password
         return data
+
+    def logout(self):
+        self.token = None
+        self._user_uuid = None
+        self._password = None
+        self._user = None
 
     def _queue_offline_action(self, action: str, payload: dict):
         import json
@@ -80,6 +89,7 @@ class APIClient:
     def get_me(self) -> dict:
         user = self._req("GET", "/api/auth/me")
         self._user = user
+        self._user_uuid = user.get("uuid")
         return user
 
     def setup_2fa(self) -> dict:
@@ -99,10 +109,11 @@ class APIClient:
     def claim_network(self, network_id: str) -> dict:
         return self._req("POST", "/api/auth/claim-network", json={"network_id": network_id})
 
-    def claim_wg_server(self, server_public_key: str, server_endpoint: str, interface: str = "wg0") -> dict:
+    def claim_wg_server(self, server_public_key: str, server_endpoint: str, server_endpoint_secondary: str = "", interface: str = "wg0") -> dict:
         return self._req("POST", "/api/auth/claim-wg-server", json={
             "server_public_key": server_public_key,
             "server_endpoint": server_endpoint,
+            "server_endpoint_secondary": server_endpoint_secondary,
             "server_interface": interface
         })
 
@@ -251,7 +262,17 @@ class APIClient:
             body["lan_ip"] = lan_ip
         if lan_subnet:
             body["lan_subnet"] = lan_subnet
+            
+        try:
+            from services.wireguard_local import get_device_capability
+            body["device_capability"] = get_device_capability()
+        except ImportError:
+            pass
+            
         return self._req("POST", "/api/devices/register", json=body)
+
+    def sync_device_status(self, device_id: int, status: str) -> dict:
+        return self._req("POST", f"/api/devices/{device_id}/status", json={"status": status})
 
     # pyrefly: ignore [bad-function-definition]
     def send_heartbeat(self, node_id: str, network_id: str, zt_ip: str = None, lan_ip: str = None, hostname: str = None, lan_subnet: str = None) -> dict:
@@ -264,6 +285,13 @@ class APIClient:
             body["hostname"] = hostname
         if lan_subnet:
             body["lan_subnet"] = lan_subnet
+            
+        try:
+            from services.wireguard_local import get_device_capability
+            body["device_capability"] = get_device_capability()
+        except ImportError:
+            pass
+            
         return self._req("POST", "/api/devices/heartbeat", json=body)
 
     def toggle_force_2fa(self, user_id: int, force_2fa: bool) -> dict:
@@ -298,6 +326,18 @@ class APIClient:
 
     def revoke_device_share(self, share_id: int) -> dict:
         return self._req("DELETE", f"/api/device-shares/{share_id}")
+
+    def download_conf(self, device_id: int) -> str:
+        with httpx.Client(base_url=self.base) as client:
+            r = client.get(f"/api/devices/{device_id}/conf", headers=self._headers())
+            r.raise_for_status()
+            return r.text
+
+    def reprovision_device(self, device_id: int, forced_type: str) -> dict:
+        return self._req("PATCH", f"/api/devices/{device_id}", json={
+            "forced_tunnel_type": forced_type,
+            "re_provision_requested": True,
+        })
 
     # ── Audit ─────────────────────────────────────────────────────
     def get_audit_logs(self, from_date: str = None, to_date: str = None) -> list:

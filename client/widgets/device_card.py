@@ -11,19 +11,20 @@ from config import TUNNEL_MODE
 class ConnectWorker(QThread):
     done = pyqtSignal(bool, str)
 
-    def __init__(self, network_id: str, connect: bool=False):
+    def __init__(self, device: dict, api, connect: bool=False):
         super().__init__()
-        self.network_id = network_id
-        self.connect = connect
+        self.device = device
+        self.api = api
+        self.connect_flag = connect
 
     def run(self):
-        # pyrefly: ignore [missing-import]
-        from services import zerotier_local
-        if hasattr(self, 'connect') and self.connect:
-            ok = zerotier_local.connect(self.network_id)
+        from services.tunnel_manager import TunnelManager
+        manager = TunnelManager(self.device)
+        if hasattr(self, 'connect_flag') and self.connect_flag:
+            ok = manager.connect(self.api)
             self.done.emit(ok, "connected" if ok else "error")
         else:
-            ok = zerotier_local.disconnect(self.network_id)
+            ok = manager.disconnect()
             self.done.emit(ok, "disconnected")
 
 class ShareDeviceDialog(QDialog):
@@ -129,11 +130,8 @@ class ToggleSwitch(QWidget):
         self.update()
 
     def set_interactable(self, enabled: bool):
-        self._interactable = enabled
-        if not enabled:
-            self.setCursor(Qt.CursorShape.ForbiddenCursor)
-        else:
-            self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._interactable = True
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.update()
 
     @pyqtProperty(float)
@@ -260,15 +258,14 @@ class DeviceCard(QFrame):
         self.api = api
         self.user = user or {}
         self.expanded = False
-        self.network_id = device.get("network_id") or ""
-        self.local_status = "disconnected"
-        if self.network_id:
-            self.local_status = zerotier_local.get_status(self.network_id)
+        from services.tunnel_manager import TunnelManager
+        self.tunnel_manager = TunnelManager(device)
+        self.local_status = self.tunnel_manager.get_status()
         
         # Debug write
         try:
             with open("C:/Users/Harsh Patel/Desktop/ProjectX_py/projectxdev-main/client_debug.log", "a") as f:
-                f.write(f"DeviceCard init. Network ID: {self.network_id}. lan_devices count: {len(device.get('lan_devices', []))}\\n")
+                f.write(f"DeviceCard init. Device: {self.device.get('name')}. lan_devices count: {len(device.get('lan_devices', []))}\\n")
                 f.write(f"Device data: {str(device)}\\n\\n")
         except Exception as e:
             pass
@@ -309,6 +306,19 @@ class DeviceCard(QFrame):
         self.name_label.setStyleSheet("font-weight:700;font-size:14px;color:#0f172a;background:transparent;border:none;")
         name_row.addWidget(self.name_label)
         
+        # Tunnel Badge
+        ttype = self.device.get("connection_info", {}).get("tunnel_type", "zerotier")
+        badge_text = "WG" if ttype == "wireguard" else "ZT"
+        badge_color = "#3b82f6" if ttype == "wireguard" else "#f59e0b"
+        self.tunnel_badge = QLabel(badge_text)
+        self.tunnel_badge.setStyleSheet(f"background:{badge_color};color:white;padding:2px 4px;border-radius:4px;font-size:10px;font-weight:bold;")
+        name_row.addWidget(self.tunnel_badge)
+
+        self.conflict_badge = QLabel("Overmapping Conflict")
+        self.conflict_badge.setStyleSheet("background:#fee2e2;color:#ef4444;padding:2px 4px;border-radius:4px;font-size:10px;font-weight:bold;")
+        self.conflict_badge.setVisible(bool(self.device.get("has_conflict")))
+        name_row.addWidget(self.conflict_badge)
+        
         edit_btn = QPushButton("✎")
         edit_btn.setFixedSize(20, 20)
         edit_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -323,6 +333,17 @@ class DeviceCard(QFrame):
             shared_badge = QLabel("Shared")
             shared_badge.setStyleSheet("background:#fef3c7;color:#b45309;padding:2px 6px;border-radius:6px;font-size:10px;font-weight:bold;")
             name_row.addWidget(shared_badge)
+            
+        is_owner = self.user.get("id") == self.device.get("owner_id")
+        is_master = self.user.get("role") in ("master", "second_master")
+        
+        if is_owner or is_master:
+            self.menu_btn = QPushButton("⋮")
+            self.menu_btn.setFixedSize(20, 20)
+            self.menu_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            self.menu_btn.setStyleSheet("QPushButton{background:transparent;color:#94a3b8;border:none;font-size:16px} QPushButton:hover{color:#3b82f6}")
+            self.menu_btn.clicked.connect(self._show_device_menu)
+            name_row.addWidget(self.menu_btn)
             
         name_row.addStretch()
         
@@ -404,6 +425,7 @@ class DeviceCard(QFrame):
 
         # Toggle Switch
         self.toggle_sw = ToggleSwitch()
+        
         self.toggle_sw.toggled.connect(self._on_toggle)
         top.addWidget(self.toggle_sw)
 
@@ -601,13 +623,58 @@ class DeviceCard(QFrame):
         if lan and lan != "—":
             QDesktopServices.openUrl(QUrl(f"http://{lan}"))
 
+    def _show_device_menu(self):
+        from PyQt6.QtWidgets import QMenu
+        menu = QMenu(self)
+        menu.setStyleSheet("QMenu{background:white;border:1px solid #e2e8f0;border-radius:4px;} QMenu::item{padding:6px 20px;} QMenu::item:selected{background:#f1f5f9;}")
+        
+        reprov_action = menu.addAction("Re-provision Tunnel")
+        action = menu.exec(self.menu_btn.mapToGlobal(self.menu_btn.rect().bottomLeft()))
+        
+        if action == reprov_action:
+            self._open_reprovision_dialog()
+            
+    def _open_reprovision_dialog(self):
+        from PyQt6.QtWidgets import QDialog, QVBoxLayout, QLabel, QComboBox, QPushButton, QHBoxLayout
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Re-provision Tunnel")
+        dlg.setFixedSize(300, 150)
+        dlg.setStyleSheet("QDialog{background:#f1f5f9} QLabel{color:#0f172a}")
+        lay = QVBoxLayout(dlg)
+        
+        lay.addWidget(QLabel("Force tunnel to:"))
+        cb = QComboBox()
+        cb.addItems(["auto", "wireguard", "zerotier"])
+        lay.addWidget(cb)
+        
+        btn_lay = QHBoxLayout()
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.clicked.connect(dlg.reject)
+        submit_btn = QPushButton("Submit")
+        submit_btn.setStyleSheet("background:#2563eb;color:white;border:none;border-radius:4px;padding:6px;")
+        
+        def on_submit():
+            try:
+                self.api.reprovision_device(self.device["id"], cb.currentText())
+                dlg.accept()
+            except Exception as e:
+                print("Failed to reprovision:", e)
+                
+        submit_btn.clicked.connect(on_submit)
+        btn_lay.addWidget(cancel_btn)
+        btn_lay.addWidget(submit_btn)
+        lay.addLayout(btn_lay)
+        dlg.exec()
+
     def _update_meta_labels(self):
         lan = self.device.get("lan_ip") or "—"
-        if TUNNEL_MODE == "wireguard":
-            tun_ip = self.device.get("wg_ip") or "—"
+        conn_info = self.device.get("connection_info", {})
+        ttype = conn_info.get("tunnel_type", "zerotier")
+        tun_ip = conn_info.get("virtual_ip") or "—"
+        
+        if ttype == "wireguard":
             prefix = "WG"
         else:
-            tun_ip = self.device.get("zerotier_ip") or "—"
             prefix = "ZT"
             
         if lan != "—":
@@ -626,6 +693,7 @@ class DeviceCard(QFrame):
     def update_data(self, device: dict):
         self.device = device
         self.name_label.setText(self.device.get("name") or "Gateway")
+        self.conflict_badge.setVisible(bool(self.device.get("has_conflict")))
         self._update_meta_labels()
         lan_count = len(self.device.get("lan_devices", []))
         if self.expanded:
@@ -653,20 +721,20 @@ class DeviceCard(QFrame):
             self.toggle_sw.set_interactable(True)
 
     def _on_toggle(self, checked: bool, is_sync: bool = False):
-        if not self.network_id:
-            self.toggle_sw.setChecked(not checked)
-            return
-
         self._update_status("connecting" if checked else "disconnected")
 
-        if not hasattr(self, "_workers"):
-            self._workers = []
-            
-        worker = ConnectWorker(self.network_id, checked)
-        worker.done.connect(self._on_connect_done)
-        worker.finished.connect(lambda w=worker: self._workers.remove(w) if w in getattr(self, "_workers", []) else None)
-        self._workers.append(worker)
-        worker.start()
+        from services.tunnel_manager import TunnelManager
+        is_local = TunnelManager.is_local_device(self.device)
+
+        if is_local:
+            if not hasattr(self, "_workers"):
+                self._workers = []
+                
+            worker = ConnectWorker(self.device, self.api, checked)
+            worker.done.connect(self._on_connect_done)
+            worker.finished.connect(lambda w=worker: self._workers.remove(w) if w in getattr(self, "_workers", []) else None)
+            self._workers.append(worker)
+            worker.start()
 
         if not is_sync:
             # Tell backend so other sessions of this user sync the toggle
@@ -674,7 +742,8 @@ class DeviceCard(QFrame):
             if device_id:
                 try:
                     import threading
-                    threading.Thread(target=self.api.sync_device_toggle, args=(device_id, self.network_id, checked), daemon=True).start()
+                    net_id = self.device.get("connection_info", {}).get("network_id", "")
+                    threading.Thread(target=self.api.sync_device_toggle, args=(device_id, net_id, checked), daemon=True).start()
                 except Exception:
                     pass
 
@@ -683,3 +752,11 @@ class DeviceCard(QFrame):
             self._update_status("disconnected")
         else:
             self._update_status(status)
+            
+        device_id = self.device.get("id")
+        if device_id and not getattr(self, "_is_syncing", False):
+            try:
+                import threading
+                threading.Thread(target=self.api.sync_device_status, args=(device_id, "active" if ok else "offline"), daemon=True).start()
+            except Exception:
+                pass

@@ -273,11 +273,11 @@ class OwnerDashboardPage(QWidget):
             self._dtw.error.connect(self._alert.show_error)
             self._dtw.start()
 
-        user_info = getattr(self.window(), "user", {})
+        user_info = self.api._user or getattr(self.window(), "user", {})
         if not _confirm_delete(self, "Confirm Delete", f'Delete tenant "{name}"? This cannot be undone.'):
             return
         _prompt_sensitive_action(
-            self, user_info, "Confirm Delete 2FA",
+            self, user_info, "Confirm Delete",
             "Please confirm tenant deletion",
             do_delete
         )
@@ -496,11 +496,11 @@ class TenantsPage(QWidget):
             self._dw.error.connect(self._alert.show_error)
             self._dw.start()
 
-        user_info = getattr(self.window(), "user", {})
+        user_info = self.api._user or getattr(self.window(), "user", {})
         if not _confirm_delete(self, "Confirm Delete", f'Delete tenant "{name}"? This cannot be undone.'):
             return
         _prompt_sensitive_action(
-            self, user_info, "Confirm Delete 2FA",
+            self, user_info, "Confirm Delete",
             "Please confirm tenant deletion",
             do_delete
         )
@@ -1412,6 +1412,7 @@ def _confirm_delete(parent, title: str, body: str) -> bool:
     return box.clickedButton() == yes_btn
 
 def _prompt_sensitive_action(parent: QWidget, user_info: dict, title: str, message: str, worker_callback) -> None:
+    print(f"DEBUG: _prompt_sensitive_action called with user_info={user_info}")
     from PyQt6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton, QMessageBox
 
     dlg = QDialog(parent)

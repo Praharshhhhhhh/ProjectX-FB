@@ -13,11 +13,16 @@ class Settings(BaseSettings):
     SECRET_KEY: str = "change-this-secret"
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440
+    OWNER_EMAIL: str = "owner@projectx.io"
+    OWNER_PASSWORD: str = "Admin@123"
 
     DATABASE_URL: str = "sqlite:///./projectx.db"
 
     ZEROTIER_CONTROLLER_URL: str = "http://localhost:9993"
     ZEROTIER_CONTROLLER_TOKEN: str = ""
+
+    WG_SERVER_ENDPOINT: str = "127.0.0.1:51820"
+    WG_SERVER_ENDPOINT_SECONDARY: str = ""
 
     APP_NAME: str = "ProjectX"
     APP_VERSION: str = "1.0.0"

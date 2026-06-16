@@ -35,6 +35,7 @@ class ClaimNetworkRequest(BaseModel):
 class ClaimWgServerRequest(BaseModel):
     server_public_key: str
     server_endpoint: str
+    server_endpoint_secondary: Optional[str] = None
     server_interface: str = "wg0"
 
 

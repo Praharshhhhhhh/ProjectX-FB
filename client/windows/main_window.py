@@ -165,7 +165,7 @@ class DashboardPage(QWidget):
         self._s_offline.set_value(len(offline))
 
         self._fill_list(self._dev_vlay, [
-            {"main": d.get("name", ""), "sub": f"LAN: {d.get('lan_ip','—')} · {'WG' if TUNNEL_MODE == 'wireguard' else 'ZT'}: {d.get('wg_ip' if TUNNEL_MODE == 'wireguard' else 'zerotier_ip','—')}",
+            {"main": d.get("name", ""), "sub": f"LAN: {d.get('lan_ip','—')} · {d.get('connection_info', {}).get('tunnel_type', 'zerotier')[:2].upper()}: {d.get('connection_info', {}).get('virtual_ip', '—')}",
              "dot": d.get("status", "offline")} for d in devices[:5]
         ], dot=True)
 
@@ -273,9 +273,8 @@ class DevicesPage(QWidget):
                     if w.toggle_sw.isChecked() != connect:
                         w.toggle_sw.setChecked(connect)
                         
-                        from services import zerotier_local
-                        node_info = zerotier_local.get_node_info()
-                        is_local = (node_info.get("address") == w.device.get("zerotier_node_id"))
+                        from services.tunnel_manager import TunnelManager
+                        is_local = TunnelManager.is_local_device(w.device)
                         
                         if is_local:
                             w._on_toggle(connect, is_sync=True)
@@ -345,8 +344,7 @@ class DevicesPage(QWidget):
 
         self.card = CardWithHeader("Active Devices")
         if is_master:
-            tun_name = "WireGuard" if TUNNEL_MODE == "wireguard" else "ZeroTier"
-            headers = ["Device Name", "LAN IP", f"{tun_name} IP", "Network", "Status", "Actions"]
+            headers = ["Device Name", "LAN IP", "Tunnel IP", "Network", "Status", "Actions"]
             self._tbl = make_table(headers)
             self._tbl.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
             self._tbl.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -417,7 +415,21 @@ class DevicesPage(QWidget):
                 if dev.get("_pending"):
                     # pyrefly: ignore [unsupported-operation]
                     name += "  [Pending]"
-                t.setItem(r, 0, table_item(name))
+                
+                name_w = QWidget()
+                name_l = QHBoxLayout(name_w)
+                name_l.setContentsMargins(4, 0, 0, 0)
+                name_l.setSpacing(6)
+                name_lbl = QLabel(name)
+                name_lbl.setStyleSheet("background:transparent; border:none;")
+                name_l.addWidget(name_lbl)
+                
+                if dev.get("has_conflict"):
+                    conflict_lbl = QLabel("Overmapping Conflict")
+                    conflict_lbl.setStyleSheet("background:#fee2e2;color:#ef4444;padding:2px 4px;border-radius:4px;font-size:10px;font-weight:bold;")
+                    name_l.addWidget(conflict_lbl)
+                name_l.addStretch()
+                t.setCellWidget(r, 0, name_w)
                 
                 lan_ip_val = dev.get("lan_ip") or "—"
                 if lan_ip_val != "—":
@@ -438,8 +450,12 @@ class DevicesPage(QWidget):
                 else:
                     t.setItem(r, 1, table_item("—"))
 
-                tun_ip = dev.get("wg_ip") if TUNNEL_MODE == "wireguard" else dev.get("zerotier_ip")
-                t.setItem(r, 2, table_item(tun_ip or "—"))
+                conn_info = dev.get("connection_info", {})
+                ttype = conn_info.get("tunnel_type", "zerotier")
+                tun_ip = conn_info.get("virtual_ip") or "—"
+                badge = "WG" if ttype == "wireguard" else "ZT"
+                t.setItem(r, 2, table_item(f"[{badge}] {tun_ip}"))
+                
                 t.setItem(r, 3, table_item(dev.get("network_id") or "—"))
                 status = "pending" if dev.get("_pending") else dev.get("status", "offline")
                 # pyrefly: ignore [missing-attribute]
@@ -492,11 +508,7 @@ class DevicesPage(QWidget):
                     card = DeviceCard(dev, self.api, user=self.user)
                     self._dev_layout.insertWidget(self._dev_layout.count() - 1, card)
             
-            # Dynamic height for scroll area
-            num_cards = len([d for d in devices if d.get("is_approved")])
-            scroll_height = (num_cards * 90) + 24
-            self._dev_scroll.setFixedHeight(scroll_height if num_cards > 0 else 100)
-            
+            pass
         if is_master:
             row_height = 50
             header_height = 42

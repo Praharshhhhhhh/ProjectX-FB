@@ -78,7 +78,7 @@ def verify_totp(secret: str, code: str) -> bool:
 def requires_2fa_setup(user: User) -> bool:
     if user.totp_enabled:
         return False
-    return user.role in (UserRole.master, UserRole.second_master) or user.force_2fa
+    return user.role in (UserRole.master, UserRole.second_master, UserRole.system_owner) or user.force_2fa
 
 
 def requires_2fa_verification(user: User) -> bool:

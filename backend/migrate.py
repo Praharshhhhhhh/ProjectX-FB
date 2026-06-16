@@ -79,5 +79,38 @@ def migrate():
     except Exception as e:
         print(f"Skipping wg_server_interface alter: {e}")
 
+    # STEP 4 - Hybrid tunnel columns
+    migrations = [
+        "ALTER TABLE devices ADD COLUMN device_capability TEXT",
+        "ALTER TABLE devices ADD COLUMN forced_tunnel_type VARCHAR",
+        "ALTER TABLE devices ADD COLUMN re_provision_requested INTEGER DEFAULT 0",
+        "ALTER TABLE devices ADD COLUMN wg_private_key VARCHAR",
+        "ALTER TABLE devices ADD COLUMN nat_virtual_pool VARCHAR",
+        "UPDATE devices SET tunnel_type = 'wireguard' WHERE wg_public_key IS NOT NULL",
+        "UPDATE devices SET tunnel_type = 'zerotier' WHERE zerotier_node_id IS NOT NULL AND (tunnel_type IS NULL OR tunnel_type = '')",
+        "ALTER TABLE tenants ADD COLUMN wg_server_endpoint_secondary VARCHAR",
+        "ALTER TABLE users ADD COLUMN uuid VARCHAR UNIQUE",
+    ]
+    for stmt in migrations:
+        try:
+            with engine.connect() as conn:
+                conn.execute(text(stmt))
+                conn.commit()
+                print(f"Executed: {stmt}")
+        except Exception as e:
+            print(f"Skipping: {stmt} - {e}")
+            
+    # Backfill UUIDs
+    try:
+        import uuid
+        with engine.connect() as conn:
+            res = conn.execute(text("SELECT id FROM users WHERE uuid IS NULL OR uuid = ''"))
+            for r in res.fetchall():
+                conn.execute(text(f"UPDATE users SET uuid = '{uuid.uuid4().hex}' WHERE id = {r[0]}"))
+            conn.commit()
+            print("Backfilled UUIDs for users")
+    except Exception as e:
+        print(f"Skipping UUID backfill: {e}")
+
 if __name__ == "__main__":
     migrate()

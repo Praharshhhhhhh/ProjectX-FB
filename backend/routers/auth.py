@@ -34,6 +34,7 @@ def login(req: LoginRequest, db: Session = Depends(get_db)):
 
     token = auth_service.create_access_token({
         "user_id": user.id,
+        "uuid": user.uuid,
         "role": user.role,
         "tenant_id": user.tenant_id,
     })
@@ -67,13 +68,15 @@ def activate_master_key(req: ActivateKeyRequest, db: Session = Depends(get_db)):
     if existing_master:
         raise HTTPException(status_code=400, detail="Tenant already has a master user")
 
+    import uuid
     user = User(
-        tenant_id=key.tenant_id,
         email=req.email,
         full_name=req.full_name,
         hashed_password=auth_service.hash_password(req.password),
         role=UserRole.master,
+        tenant_id=key.tenant_id,
         is_active=True,
+        uuid=uuid.uuid4().hex
     )
     db.add(user)
     db.flush()
@@ -169,6 +172,7 @@ def claim_wg_server(
     
     tenant.wg_server_public_key = req.server_public_key
     tenant.wg_server_endpoint = req.server_endpoint
+    tenant.wg_server_endpoint_secondary = req.server_endpoint_secondary
     tenant.wg_server_interface = req.server_interface
     tenant.network_owner_id = current_user.id
     db.commit()
@@ -198,11 +202,13 @@ def get_me(current_user: User = Depends(get_current_user), db: Session = Depends
     tenant = db.query(Tenant).filter(Tenant.id == current_user.tenant_id).first() if current_user.tenant_id else None
     return {
         "id": current_user.id,
+        "uuid": current_user.uuid,
         "email": current_user.email,
         "full_name": current_user.full_name,
         "role": current_user.role,
         "tenant_id": current_user.tenant_id,
         "network_id": tenant.zerotier_network_id if tenant else None,
+        "has_wg_server": bool(tenant.wg_server_public_key) if tenant else False,
         "totp_enabled": current_user.totp_enabled,
         "must_change_password": current_user.must_change_password,
     }

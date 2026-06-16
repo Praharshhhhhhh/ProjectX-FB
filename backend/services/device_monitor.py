@@ -22,12 +22,13 @@ async def refresh_device_statuses():
             # For wireguard: must have wg_public_key
             if device.tunnel_type == "wireguard" and device.wg_public_key:
                 now = datetime.utcnow()
-                if device.updated_at and (now - device.updated_at) < timedelta(seconds=10):
+                if device.updated_at and (now - device.updated_at) < timedelta(seconds=45):
                     if device.status != DeviceStatus.active:
                         device.status = DeviceStatus.active
                     continue
 
-                status_str = await wireguard_controller.check_peer_status(device.wg_public_key)
+                tenant_interface = device.tenant.wg_server_interface if device.tenant else "wg0"
+                status_str = await wireguard_controller.check_peer_status(device.wg_public_key, interface=tenant_interface)
                 new_status = DeviceStatus(status_str)
                 if device.status != new_status:
                     device.status = new_status
@@ -35,9 +36,8 @@ async def refresh_device_statuses():
             elif device.tunnel_type == "zerotier" and device.network_id and device.zerotier_node_id:
                 # If the device has sent a heartbeat recently (within 2 minutes),
                 # mark/keep it active and bypass the ZeroTier controller check.
-                # pyrefly: ignore [deprecated]
                 now = datetime.utcnow()
-                if device.updated_at and (now - device.updated_at) < timedelta(seconds=10):
+                if device.updated_at and (now - device.updated_at) < timedelta(seconds=45):
                     if device.status != DeviceStatus.active:
                         device.status = DeviceStatus.active
                     continue

@@ -65,12 +65,14 @@ def _seed_system_owner():
     try:
         owner = db.query(User).filter(User.role == UserRole.system_owner).first()
         if not owner:
+            import uuid
             owner = User(
-                email="owner@projectx.io",
+                email=settings.OWNER_EMAIL,
                 full_name="System Owner",
-                hashed_password=hash_password("Admin@123"),
+                hashed_password=hash_password(settings.OWNER_PASSWORD),
                 role=UserRole.system_owner,
                 is_active=True,
+                uuid=uuid.uuid4().hex
             )
             db.add(owner)
             db.commit()

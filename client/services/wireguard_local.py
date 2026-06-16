@@ -82,7 +82,8 @@ def connect(config_name_or_path: str) -> bool:
         path = config_name_or_path
         if not path.endswith(".conf"):
             path = os.path.join(WG_CONFIG_DIR, f"{config_name_or_path}.conf")
-        cmd = ["wireguard.exe", "/installtunnelservice", path]
+        wg_manager = r"C:\Program Files\WireGuard\wireguard.exe"
+        cmd = [wg_manager, "/installtunnelservice", path]
     else:
         # Linux wg-quick takes the config name (interface name)
         name = os.path.basename(config_name_or_path).replace(".conf", "")
@@ -99,7 +100,8 @@ def disconnect(config_name: str) -> bool:
     if sys.platform == "win32":
         # Usually /uninstalltunnelservice takes the interface name
         name = os.path.basename(config_name).replace(".conf", "")
-        cmd = ["wireguard.exe", "/uninstalltunnelservice", name]
+        wg_manager = r"C:\Program Files\WireGuard\wireguard.exe"
+        cmd = [wg_manager, "/uninstalltunnelservice", config_name]
     else:
         name = os.path.basename(config_name).replace(".conf", "")
         cmd = ["wg-quick", "down", name]
@@ -164,3 +166,69 @@ def is_wireguard_running() -> bool:
         return False
     except (subprocess.CalledProcessError, FileNotFoundError):
         return False
+
+def get_device_capability() -> dict:
+    import sys
+    import subprocess
+    import shutil
+    import os
+    
+    cap = {
+        "kernel": "",
+        "arch": "",
+        "has_wireguard_kernel": False,
+        "has_wireguard_userspace": False,
+        "has_zerotier": False,
+        "ram_mb": 0,
+        "cpu_cores": os.cpu_count() or 0
+    }
+    
+    try:
+        if sys.platform != "win32":
+            cap["kernel"] = subprocess.run(["uname", "-r"], capture_output=True, text=True).stdout.strip()
+            cap["arch"] = subprocess.run(["uname", "-m"], capture_output=True, text=True).stdout.strip()
+            
+            # Check for wireguard kernel module
+            if os.path.exists("/sys/module/wireguard"):
+                cap["has_wireguard_kernel"] = True
+            else:
+                cap["has_wireguard_kernel"] = (subprocess.run(["modprobe", "-n", "wireguard"], capture_output=True).returncode == 0)
+                
+            cap["has_wireguard_userspace"] = shutil.which("wireguard-go") is not None
+            
+            # RAM
+            try:
+                with open("/proc/meminfo", "r") as f:
+                    for line in f:
+                        if line.startswith("MemTotal:"):
+                            parts = line.split()
+                            if len(parts) >= 2:
+                                cap["ram_mb"] = int(parts[1]) // 1024
+                            break
+            except Exception:
+                pass
+        else:
+            # Windows
+            cap["kernel"] = "Windows"
+            cap["arch"] = os.environ.get("PROCESSOR_ARCHITECTURE", "")
+            cap["has_wireguard_kernel"] = False
+            cap["has_wireguard_userspace"] = True # WireGuard on Windows uses userspace
+            
+            # RAM via powershell
+            try:
+                mem = subprocess.run(["powershell", "-Command", "Get-CimInstance Win32_OperatingSystem | Select-Object -ExpandProperty TotalVisibleMemorySize"], capture_output=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW).stdout.strip()
+                if mem:
+                    cap["ram_mb"] = int(mem) // 1024
+            except Exception:
+                pass
+                
+        # ZT check
+        if sys.platform == "win32":
+            cap["has_zerotier"] = os.path.exists(r"C:\ProgramData\ZeroTier\One\zerotier-one.exe")
+        else:
+            cap["has_zerotier"] = shutil.which("zerotier-one") is not None
+            
+    except Exception:
+        pass
+        
+    return cap
