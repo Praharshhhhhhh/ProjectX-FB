@@ -79,24 +79,13 @@ async def _handle_subnet_overlap(device: Device, db: Session):
     overlaps = check_subnet_overlap(device.lan_subnet, device.id, db)
     if overlaps:
         if device.tunnel_type == "wireguard":
-            existing_rule = _applied_rules.get(device.id)
-            subnet_changed = (
-                existing_rule is not None
-                and existing_rule.get("real_subnet") != device.lan_subnet
-            )
-            if device.nat_virtual_pool and subnet_changed:
-                # Remove the stale rule before rewriting
-                await remove_iptables_nat_rule(device.id)
-                device.nat_virtual_pool = None
-
+            # Edge NAT handling: The Hub routes the virtual pool down the tunnel.
+            # The edge client executes iptables NETMAP translation locally.
             if not device.nat_virtual_pool:
                 virtual_pool = assign_next_nat_pool(db)
-                ok = await write_iptables_nat_rule(
-                    device.id, virtual_pool, device.lan_subnet, device.lan_ip
-                )
-                if ok:
-                    device.nat_virtual_pool = virtual_pool
-                    db.commit()
+                device.nat_virtual_pool = virtual_pool
+                db.commit()
+                logger.info(f"Assigned Edge NAT virtual pool {virtual_pool} to device {device.id} to resolve collision.")
         else:
             overlap_ids = [o.id for o in overlaps]
             logger.warning(
@@ -553,7 +542,9 @@ async def get_device_conf(device_id: int, current_user: Annotated[User, Depends(
         private_key=device.wg_private_key,
         assigned_ip=device.wg_ip,
         server_pubkey=server_pubkey,
-        server_endpoint=server_endpoint
+        server_endpoint=server_endpoint,
+        virtual_pool=device.nat_virtual_pool,
+        real_subnet=device.lan_subnet
     )
     return Response(content=conf, media_type="text/plain",
         headers={"Content-Disposition": f'attachment; filename="{device.name}.conf"'})

@@ -113,7 +113,12 @@ async def sync_windows_peers(interface: str, peers: list[tuple[str, str]]) -> bo
         # Append all new peers
         new_conf = "".join(interface_lines)
         for pub_key, allowed_ip in peers:
-            new_conf += f"\n[Peer]\nPublicKey = {pub_key}\nAllowedIPs = {allowed_ip}/32\n"
+            # Check if allowed_ip already has CIDR notations (because of multiple IPs)
+            if "/" in allowed_ip:
+                ips = allowed_ip
+            else:
+                ips = f"{allowed_ip}/32"
+            new_conf += f"\n[Peer]\nPublicKey = {pub_key}\nAllowedIPs = {ips}\n"
             
         with open(conf_path, "w") as f:
             f.write(new_conf)
@@ -127,12 +132,18 @@ async def sync_windows_peers(interface: str, peers: list[tuple[str, str]]) -> bo
             capture_output=True
         )
         
+        # Windows Service Manager needs time to actually stop and delete the service
+        # before we can install a new one with the exact same name.
+        await asyncio.sleep(3)
+        
         await asyncio.to_thread(
             subprocess.run,
             [WIREGUARD_EXE, "/installtunnelservice", conf_path],
             capture_output=True
         )
         
+        # Another small sleep before executing interface commands
+        await asyncio.sleep(1)
         # When the service is reinstalled, Windows resets IP Forwarding to Disabled.
         # We must re-enable it for the Hub-and-Spoke routing to work.
         # We MUST also enable WeakHostSend and WeakHostReceive to allow Hairpin routing
@@ -173,11 +184,15 @@ async def add_peer(public_key: str, allowed_ip: str, interface: str = "wg0") -> 
             for d in devices:
                 t_iface = d.tenant.wg_server_interface if d.tenant and d.tenant.wg_server_interface else "wg0"
                 if t_iface == interface:
-                    peers.append((d.wg_public_key, d.wg_ip))
+                    ip_str = f"{d.wg_ip}/32"
+                    if d.nat_virtual_pool:
+                        ip_str += f", {d.nat_virtual_pool}.0/24"
+                    peers.append((d.wg_public_key, ip_str))
                     if d.wg_public_key == public_key:
                         found_new = True
                         
             if not found_new:
+                # Provide the raw string, it might have commas
                 peers.append((public_key, allowed_ip))
                 
             return await sync_windows_peers(interface, peers)
@@ -187,8 +202,9 @@ async def add_peer(public_key: str, allowed_ip: str, interface: str = "wg0") -> 
         finally:
             db.close()
             
-    # wg set <interface> peer <pubkey> allowed-ips <ip>/32
-    res = await _run_wg("set", interface, "peer", public_key, "allowed-ips", f"{allowed_ip}/32")
+    # wg set <interface> peer <pubkey> allowed-ips <ips>
+    ips = allowed_ip if "/" in allowed_ip else f"{allowed_ip}/32"
+    res = await _run_wg("set", interface, "peer", public_key, "allowed-ips", ips)
     await _save_conf(interface)
     return True
 
@@ -296,11 +312,7 @@ def assign_ip_from_pool(db: Session, tenant_id: int) -> str:
             return ip
     return f"10.{t_subnet}.0.254"
 
-def generate_client_config(private_key: str, assigned_ip: str, server_pubkey: str, server_endpoint: str, other_peers: list = None) -> str:
-    # If the client provides a private key, we could include it, but the instruction 
-    # said private keys must never be sent to backend. 
-    # Thus, the client replaces it or we just generate the rest and client writes it.
-    
+def generate_client_config(private_key: str, assigned_ip: str, server_pubkey: str, server_endpoint: str, virtual_pool: str = None, real_subnet: str = None) -> str:
     if assigned_ip.startswith("10."):
         # Route the entire ProjectX subnet (10.0.0.0/8) through the VPN 
         # so clients can reach the Hub (10.0.0.1) AND other peers (10.x.x.x)
@@ -308,10 +320,17 @@ def generate_client_config(private_key: str, assigned_ip: str, server_pubkey: st
     else:
         allowed_ips = "10.0.0.0/8"
 
+    post_up = ""
+    post_down = ""
+    if virtual_pool and real_subnet:
+        # Inject Linux iptables NETMAP translation directly into the Edge Gateway config
+        post_up = f"PostUp = iptables -t nat -A PREROUTING -d {virtual_pool}.0/24 -j NETMAP --to {real_subnet}\n"
+        post_down = f"PostDown = iptables -t nat -D PREROUTING -d {virtual_pool}.0/24 -j NETMAP --to {real_subnet}\n"
+
     conf = f"""[Interface]
 PrivateKey = {private_key if private_key else 'REPLACE_ME'}
 Address = {assigned_ip}/32
-
+{post_up}{post_down}
 [Peer]
 PublicKey = {server_pubkey}
 Endpoint = {server_endpoint}

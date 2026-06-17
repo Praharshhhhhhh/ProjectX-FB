@@ -1,0 +1,373 @@
+
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Merriweather:ital,wght@0,300;0,400;0,700;1,400&family=Inter:wght@400;500;600;700&family=Fira+Code:wght@400;500&display=swap');
+
+  :root {
+    --primary: #2563eb;
+    --primary-light: #eff6ff;
+    --slate: #475569;
+    --dark: #0f172a;
+    --border: #e2e8f0;
+  }
+
+  @page {
+    size: A4;
+    margin: 20mm;
+  }
+
+  body {
+    font-family: 'Inter', sans-serif;
+    color: #111;
+    background: white;
+    margin: 0;
+    padding: 0;
+    line-height: 1.6;
+  }
+  
+  .document {
+    width: 100%;
+    max-width: 210mm;
+    margin: 0 auto;
+    box-sizing: border-box;
+  }
+
+  /* Typography */
+  h1 { font-family: 'Merriweather', serif; font-size: 2.5rem; color: var(--dark); margin-bottom: 0.5rem; }
+  h2 { font-family: 'Merriweather', serif; font-size: 1.6rem; color: var(--dark); border-bottom: 2px solid var(--primary); padding-bottom: 0.3rem; margin-top: 2.5rem; margin-bottom: 1rem; page-break-after: avoid; }
+  h3 { font-family: 'Inter', sans-serif; font-size: 1.2rem; color: var(--primary); margin-top: 1.5rem; page-break-after: avoid; }
+  h4 { font-family: 'Inter', sans-serif; font-size: 1.05rem; color: var(--slate); margin-top: 1rem; page-break-after: avoid; }
+  
+  p.body-text { font-family: 'Merriweather', serif; font-size: 0.95rem; color: #333; margin-bottom: 1rem; line-height: 1.7; text-align: justify; }
+  
+  ul { margin-bottom: 1rem; padding-left: 20px; }
+  li { font-family: 'Merriweather', serif; font-size: 0.95rem; margin-bottom: 0.4rem; line-height: 1.6; }
+
+  code { font-family: 'Fira Code', monospace; background: #f1f5f9; padding: 2px 6px; border-radius: 4px; font-size: 0.85em; color: #b91c1c; }
+  pre { background: #0f172a; color: #f8fafc; padding: 15px; border-radius: 8px; font-family: 'Fira Code', monospace; font-size: 0.8rem; overflow-x: auto; page-break-inside: avoid; }
+
+  /* Title Page */
+  .title-page { display: flex; flex-direction: column; justify-content: center; height: 200mm; page-break-after: always; }
+  .title-page-subtitle { font-size: 1.1rem; color: var(--slate); font-weight: 500; margin-bottom: 3rem; text-transform: uppercase; letter-spacing: 2px; }
+  .title-page-date { font-size: 0.9rem; color: #94a3b8; }
+
+  /* Diagrams */
+  .canvas {
+    background: #fbfbfb;
+    border-radius: 8px;
+    padding: 20px;
+    margin: 15px 0 20px 0;
+    border: 1px solid var(--border);
+    page-break-inside: avoid;
+    font-family: 'Inter', sans-serif;
+  }
+
+  /* Colors */
+  .bg-blue { background: #eff6ff; border: 1px solid #bfdbfe; color: #1d4ed8; }
+  .bg-purple { background: #f3e8ff; border: 1px solid #e9d5ff; color: #7e22ce; }
+  .bg-green { background: #f0fdf4; border: 1px solid #bbf7d0; color: #15803d; }
+  .bg-orange { background: #fff7ed; border: 1px solid #fed7aa; color: #c2410c; }
+  .bg-red { background: #fef2f2; border: 1px solid #fecaca; color: #b91c1c; }
+  .bg-gray { background: #f8fafc; border: 1px solid #e2e8f0; color: #475569; }
+
+  .box { border-radius: 6px; padding: 12px; text-align: center; position: relative; }
+  .box-title { font-weight: 600; font-size: 13px; margin-bottom: 4px; }
+  .box-sub { font-size: 11px; opacity: 0.85; line-height: 1.3; }
+
+  .arrow-right { display: inline-flex; align-items: center; justify-content: center; width: 40px; }
+  .arrow-right::after { content: "→"; color: #94a3b8; font-size: 18px; }
+  .arrow-down { display: flex; align-items: center; justify-content: center; width: 100%; height: 25px; }
+  .arrow-down::after { content: "↓"; color: #94a3b8; font-size: 18px; }
+
+  .table-feature { width: 100%; border-collapse: collapse; margin-bottom: 1.5rem; page-break-inside: auto; }
+  .table-feature tr { page-break-inside: avoid; page-break-after: auto; }
+  .table-feature th, .table-feature td { border: 1px solid var(--border); padding: 10px; text-align: left; }
+  .table-feature th { background: var(--primary-light); color: var(--primary); font-family: 'Inter', sans-serif; font-size: 0.95rem; }
+  .table-feature td { font-family: 'Merriweather', serif; font-size: 0.9rem; }
+
+</style>
+</head>
+<body>
+
+<div class="document">
+
+  <!-- COVER PAGE -->
+  <div class="title-page">
+    <div style="width: 80px; height: 8px; background: var(--primary); margin-bottom: 1.5rem;"></div>
+    <h1>ProjectX Platform</h1>
+    <div class="title-page-subtitle">Deep-Dive Technical Architecture & Operational Playbook</div>
+    
+    <p class="body-text" style="font-size: 1.1rem; max-width: 650px; margin-top: 1.5rem;">
+      A comprehensive technical manual detailing the underlying architecture, cryptographic security model, backend topology, multi-threaded UI lifecycle, advanced routing mechanics, and the step-by-step user journey governing the next generation of zero-trust Operational Technology (OT) network access.
+    </p>
+    
+    <div style="margin-top: auto;">
+      <div class="title-page-date">Confidential & Proprietary Document</div>
+      <div class="title-page-date" id="current-date">Generated: June 2026</div>
+    </div>
+  </div>
+
+  <!-- SECTION 1: EXECUTIVE SUMMARY -->
+  <h2>1. Executive Summary & Design Philosophy</h2>
+  <p class="body-text">
+    ProjectX is an enterprise-grade Zero-Trust network access platform engineered specifically to provide secure, role-based remote access to Industrial and Operational Technology (OT) devices. Traditional VPN solutions rely on granting sweeping subnet access to operators, posing massive lateral-movement risks. 
+  </p>
+  <p class="body-text">
+    By fusing the blisteringly fast cryptography of WireGuard with a robust, centrally orchestrated FastAPI backend, ProjectX completely abstracts away the complexity of managing private keys and iptables. It enforces a strictly governed Hub-and-Spoke topology where every connection is authenticated via short-lived JWTs, every packet is explicitly routed via dynamic NAT, and every user action is validated against their cryptographic identity.
+  </p>
+
+  <h3>1.1 The Complete Technology Stack</h3>
+  <table class="table-feature">
+    <tr>
+      <th style="width: 25%">Domain</th>
+      <th>Implementation & Technologies</th>
+    </tr>
+    <tr>
+      <td><strong>Backend Orchestrator</strong></td>
+      <td>Python 3.13 utilizing FastAPI for asynchronous REST APIs. Uvicorn acts as the ASGI server. Data is modeled via Pydantic and persisted via SQLAlchemy to an encrypted SQLite database for ultra-low latency reads.</td>
+    </tr>
+    <tr>
+      <td><strong>Cryptography</strong></td>
+      <td>Strictly relies on Curve25519 for Diffie-Hellman key exchange, ChaCha20 for stream encryption, and Poly1305 for MAC authentication, leveraging native WireGuard kernel drivers.</td>
+    </tr>
+    <tr>
+      <td><strong>Gateway Routing Hub</strong></td>
+      <td>A native Windows Server executing <code style="color:black;">wireguard.exe</code> as a system service. It utilizes custom Kernel-level <code style="color:black;">WeakHostSend</code> registry edits to achieve flawless peer-to-peer U-turn routing across isolated virtual subnets.</td>
+    </tr>
+    <tr>
+      <td><strong>Desktop Endpoints</strong></td>
+      <td>A highly optimized C++ wrapped GUI utilizing PyQt6. It leverages complex multi-threading (<code style="color:black;">QThread</code>) to execute LAN sweeps, websocket connections, and cryptographic parsing entirely asynchronously.</td>
+    </tr>
+    <tr>
+      <td><strong>Real-Time Synchronization</strong></td>
+      <td>WebSockets (<code style="color:black;">ws://</code> / <code style="color:black;">wss://</code>) establish a persistent bi-directional channel, broadcasting JSON payloads to connected clients within milliseconds of a state change in the FastAPI controller.</td>
+    </tr>
+  </table>
+
+  <!-- SECTION 2: TOPOLOGY -->
+  <h2>2. Network Architecture & Hub-and-Spoke Topology</h2>
+  <p class="body-text">
+    Unlike mesh networks where endpoints must discover one another, ProjectX enforces a centralized Hub-and-Spoke topology. Industrial gateways (Factory nodes) and remote operators (Technician laptops) never establish direct internet connections with each other. Instead, both nodes establish an outbound-only connection to the Cloud Gateway.
+  </p>
+
+  <div class="canvas">
+    <div style="text-align: center; font-size: 12px; font-weight: 600; color: #475569; margin-bottom: 15px;">
+      Diagram 1: The Big Picture Topology
+    </div>
+    <div style="display: flex; align-items: center; justify-content: space-between; gap: 10px;">
+      <div class="box bg-blue" style="flex: 1;">
+        <div class="box-title">Technician</div>
+        <div class="box-sub">laptop anywhere</div>
+      </div>
+      <div style="text-align: center; font-size: 10px; color: #475569;">
+        encrypted WG<br><span style="color:#2563eb">▶</span>
+      </div>
+      <div class="box bg-purple" style="flex: 1; padding: 10px;">
+        <div class="box-title" style="margin-bottom:5px;">Cloud VPS Hub</div>
+        <div class="box bg-green" style="margin-bottom:5px; padding:6px; font-size:10px;">FastAPI Backend</div>
+        <div class="box bg-orange" style="padding:6px; font-size:10px;">WG Server wg0</div>
+      </div>
+      <div style="text-align: center; font-size: 10px; color: #15803d; font-weight:bold;">
+        - - ▶<br><br>- - ▶
+      </div>
+      <div style="flex: 1; display: flex; flex-direction: column; gap: 10px;">
+        <div class="box bg-green"><div class="box-title">Factory A</div></div>
+        <div class="box bg-green"><div class="box-title">Factory B</div></div>
+      </div>
+    </div>
+  </div>
+
+  <h3>2.1 Bypassing the Windows Strong Host Model (Hairpin Routing)</h3>
+  <p class="body-text">
+    A significant engineering hurdle in Hub-and-Spoke VPNs on Windows Servers is the OS's native "Strong Host Model". By default, the Windows TCP/IP stack silently drops any packet that attempts to route back out the exact same interface it arrived on. This makes Peer-to-Peer pinging through a central <code style="color:black;">wg0</code> interface impossible natively.
+  </p>
+  <p class="body-text">
+    The ProjectX Backend API mitigates this programmatically. When generating the WireGuard tunnel configuration, the Python controller invokes native PowerShell to actively manipulate the Windows IP routing stack, enabling <code style="color:black;">WeakHostSend</code> and <code style="color:black;">WeakHostReceive</code> on the virtual adapter. This allows the packet to perform a "U-Turn" back to the destination peer.
+  </p>
+<pre>
+# Backend implementation of Hairpin enablement
+subprocess.run([
+    "powershell", "-Command",
+    "Set-NetIPInterface -InterfaceAlias 'wg0' "
+    "-Forwarding Enabled -WeakHostSend Enabled -WeakHostReceive Enabled"
+], check=True)
+</pre>
+
+  <!-- SECTION 3: CODE OF CONDUCT -->
+  <h2>3. Identity, Roles, and Code of Conduct</h2>
+  <p class="body-text">
+    Access in ProjectX is governed by a strict hierarchical system. Every user account belongs to a designated <code style="color:black;">tenant_id</code>. A fundamental design principle of ProjectX is <strong>absolute tenant isolation</strong>. Below is the strict Code of Conduct and capability matrix for each identity.
+  </p>
+  
+  <h3>3.1 Role Hierarchy & Responsibilities</h3>
+  <table class="table-feature">
+    <tr>
+      <th style="width: 15%">Role</th>
+      <th style="width: 15%">Tenant Bounds</th>
+      <th>Code of Conduct & Responsibilities</th>
+    </tr>
+    <tr>
+      <td><strong>System Owner</strong></td>
+      <td>Global</td>
+      <td><strong>The Architect.</strong> Operates outside the tenant structure. Responsible solely for platform creation, generating new Tenants, and issuing 16-character Activation Keys to new Corporate clients. Must never interact with ground-level factory endpoints.</td>
+    </tr>
+    <tr>
+      <td><strong>Master</strong></td>
+      <td>Isolated</td>
+      <td><strong>The Corporate IT Admin.</strong> Claims their Tenant using an Activation Key. Responsible for setting up the internal corporate structure, adding sub-users (Admins/Trusted), and generating the cryptographic configurations that are deployed onto the physical Factory Gateways. They control Cross-Tenant sharing.</td>
+    </tr>
+    <tr>
+      <td><strong>Second Master</strong></td>
+      <td>Isolated</td>
+      <td><strong>The Backup Admin.</strong> Granted identical rights to the Master to prevent catastrophic lockouts. Responsible for auditing network access if the primary Master is unavailable.</td>
+    </tr>
+    <tr>
+      <td><strong>Admin</strong></td>
+      <td>Isolated</td>
+      <td><strong>The Standard Operator.</strong> A restricted user. They can only see and connect to devices that have been <em>explicitly</em> assigned to them by a Master. Perfect for third-party contractors or localized engineers.</td>
+    </tr>
+    <tr>
+      <td><strong>Trusted</strong></td>
+      <td>Isolated</td>
+      <td><strong>The Elevated Operator.</strong> A highly privileged user. They inherently have full access to <em>all approved devices</em> across the entire Tenant without needing explicit, per-machine assignments. Ideal for Senior Field Engineers.</td>
+    </tr>
+  </table>
+
+  <h3>3.2 Mandatory 2FA & TOTP</h3>
+  <p class="body-text">
+    All administrative operations require Time-based One-Time Passwords (TOTP). During onboarding, the FastAPI backend generates a secret seed using the <code style="color:black;">pyotp</code> library, transmitting a <code style="color:black;">otpauth://</code> URI to the PyQt client, which dynamically renders a QR Code in memory for scanning by Google Authenticator or Authy.
+  </p>
+
+  <!-- SECTION 4: OPERATIONAL PLAYBOOK -->
+  <h2>4. The Operational Playbook (User Journey)</h2>
+  <p class="body-text">
+    The following maps out the exact sequence of events required to bring a brand-new Corporate Client online and establish a secure connection from a Technician's laptop to an Industrial PLC.
+  </p>
+
+  <div class="canvas" style="padding: 25px;">
+    
+    <div style="margin-bottom: 25px;">
+      <div style="font-weight: 700; color: #1d4ed8; font-size: 1.1rem; margin-bottom: 5px;">Phase 1: Inception (System Owner)</div>
+      <ol style="margin-top:0; font-size: 0.95rem; color: #334155;">
+        <li>The System Owner logs into the global dashboard using highly restricted credentials.</li>
+        <li>They create a new Tenant (e.g., "MegaCorp Industries").</li>
+        <li>The system generates a unique, one-time <strong>16-character Activation Key</strong>.</li>
+        <li>The Owner securely transmits this Activation Key to MegaCorp's IT Director.</li>
+      </ol>
+    </div>
+
+    <div style="margin-bottom: 25px;">
+      <div style="font-weight: 700; color: #7e22ce; font-size: 1.1rem; margin-bottom: 5px;">Phase 2: Tenant Claiming (Master)</div>
+      <ol style="margin-top:0; font-size: 0.95rem; color: #334155;">
+        <li>MegaCorp's IT Director downloads the PyQt Desktop Client.</li>
+        <li>They click <em>"Activate Master Account with Key"</em> on the login screen.</li>
+        <li>They input the Activation Key, their corporate email, and a password.</li>
+        <li>They are immediately prompted to bind an Authenticator App (Google Auth) via an on-screen QR Code.</li>
+        <li>Once 2FA is verified, the Tenant is permanently locked to their identity. They are now the <strong>Master</strong>.</li>
+      </ol>
+    </div>
+
+    <div style="margin-bottom: 25px;">
+      <div style="font-weight: 700; color: #15803d; font-size: 1.1rem; margin-bottom: 5px;">Phase 3: Provisioning Gateway Devices & Users</div>
+      <ol style="margin-top:0; font-size: 0.95rem; color: #334155;">
+        <li>The Master logs into the Web Dashboard.</li>
+        <li>They create a "Gateway Endpoint" device profile for <em>Factory A</em>. The backend generates a WireGuard <code style="background:#fef2f2;color:#b91c1c;padding:2px 6px;border-radius:4px;font-family:monospace;">.conf</code> file and an Installation Script.</li>
+        <li>They deploy the script onto the physical Windows/Linux server sitting inside Factory A. The server boots, connects to the Cloud Hub, and begins emitting a 30-second telemetry heartbeat.</li>
+        <li>The Master creates an <strong>Admin</strong> user account for their remote Field Technician (John).</li>
+      </ol>
+    </div>
+
+    <div>
+      <div style="font-weight: 700; color: #c2410c; font-size: 1.1rem; margin-bottom: 5px;">Phase 4: Remote Access Execution (Admin)</div>
+      <ol style="margin-top:0; font-size: 0.95rem; color: #334155;">
+        <li>John (the Technician) opens the PyQt Desktop App from his hotel room.</li>
+        <li>He logs in and sees <em>Factory A</em> listed in his device grid with a green online heartbeat indicator.</li>
+        <li>He clicks the <strong>"Connect"</strong> toggle.</li>
+        <li>The PyQt App parses his cryptographic identity, builds an encrypted WireGuard tunnel to the Cloud Hub, and the FastAPI backend calculates the U-Turn routing metric.</li>
+        <li>John opens his browser, types in the internal IP of the Factory PLC (e.g., <code style="background:#fef2f2;color:#b91c1c;padding:2px 6px;border-radius:4px;font-family:monospace;">10.50.1.15</code>), and the interface loads instantly. The encrypted tunnel is fully operational.</li>
+      </ol>
+    </div>
+
+  </div>
+
+  <!-- SECTION 5: NAT & OVERLAPS -->
+  <h2>5. Subnet Collisions and Edge NAT Translation</h2>
+  <p class="body-text">
+    In industrial environments, it is incredibly common for disparate factories to use identical, overlapping internal subnets (e.g., <code style="color:black;">192.168.1.0/24</code>). Normally, this causes catastrophic routing collisions. Because the central Hub runs on Windows Server, attempting to centrally route and NAT overlapping subnets without VRFs (Virtual Routing and Forwarding) is impossible.
+  </p>
+  
+  <div class="canvas">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+      <div class="box bg-red" style="flex: 1; padding: 10px;">
+        <div class="box-title">Factory A</div>
+        <div class="box-sub" style="color:#b91c1c;">192.168.1.0/24</div>
+      </div>
+      <div style="flex: 0.8; text-align: center;">
+        <div class="box bg-red" style="display:inline-block; padding: 4px 8px;">
+          <div class="box-title" style="color:#b91c1c;">Routing Collision</div>
+        </div>
+      </div>
+      <div class="box bg-red" style="flex: 1; padding: 10px;">
+        <div class="box-title">Factory B</div>
+        <div class="box-sub" style="color:#b91c1c;">192.168.1.0/24</div>
+      </div>
+    </div>
+    
+    <div style="display: flex; justify-content: space-between; align-items: center;">
+      <div class="box bg-green" style="flex: 1; padding: 10px;">
+        <div class="box-title">Edge Gateway A</div>
+        <div class="box-sub" style="color:#15803d; font-weight:bold;">Local NETMAP NAT</div>
+        <div class="box-sub" style="color:#15803d;">Translates 10.50.1.X</div>
+      </div>
+      <div class="box bg-purple" style="flex: 0.8; margin: 0 10px; padding: 10px;">
+        <div class="box-title">Cloud VPS Hub</div>
+        <div class="box-sub" style="color:#7e22ce;">Routes Virtual Pools</div>
+      </div>
+      <div class="box bg-green" style="flex: 1; padding: 10px;">
+        <div class="box-title">Edge Gateway B</div>
+        <div class="box-sub" style="color:#15803d; font-weight:bold;">Local NETMAP NAT</div>
+        <div class="box-sub" style="color:#15803d;">Translates 10.50.2.X</div>
+      </div>
+    </div>
+  </div>
+  
+  <p class="body-text">
+    ProjectX solves this implicitly via <strong>Dynamic Edge NAT</strong>. When the FastAPI backend detects a subnet collision, it assigns a unique Virtual Pool (e.g., <code style="color:black;">10.50.1.0/24</code>) to the Factory. It automatically instructs the Central Hub to route that virtual subnet down the tunnel.
+  </p>
+  <p class="body-text">
+    Crucially, the translation happens at the absolute Edge. The backend automatically injects native Linux <code style="color:black;">iptables NETMAP</code> scripts directly into the `PostUp` block of the Factory Gateway's WireGuard configuration file. When a Technician connects to <code style="color:black;">10.50.1.15</code>, the packet routes to the Factory Gateway, which instantly translates the destination IP to <code style="color:black;">192.168.1.15</code> before forwarding it to the PLC.
+  </p>
+
+  <!-- SECTION 6: CLIENT ARCHITECTURE -->
+  <h2>6. Desktop Client Engineering & UI Synchronization</h2>
+  <p class="body-text">
+    The desktop client utilizes a sophisticated C++ wrapped GUI via PyQt6. It is designed to be completely non-blocking, relying heavily on the PyQt <code style="color:black;">QThread</code> and Signal/Slot architecture. 
+  </p>
+
+  <h3>6.1 Worker Lifecycle Management</h3>
+  <p class="body-text">
+    Because network requests (like initiating a WireGuard tunnel or verifying 2FA) take time, executing them on the main GUI thread would cause the application to freeze ("Not Responding"). ProjectX offloads all I/O bound tasks to isolated <code style="color:black;">QThread</code> workers (e.g. <code style="color:black;">ConnectWorker</code>, <code style="color:black;">ScanWorker</code>). 
+  </p>
+  <p class="body-text">
+    To prevent PyQt's aggressive garbage collector from destroying running threads when a user abruptly closes the application (which historically causes the fatal <code style="color:black;">QThread: Destroyed while thread is still running</code> crash), the application utilizes a global <code style="color:black;">_active_workers</code> tracking set. During the application's <code style="color:black;">closeEvent</code>, the thread manager systematically calls <code style="color:black;">terminate()</code> and <code style="color:black;">wait()</code> on every background process, ensuring a perfectly clean exit.
+  </p>
+
+  <h3>6.2 Multithreaded LAN Discovery</h3>
+  <p class="body-text">
+    When installed on an industrial gateway, operators must identify which PLCs and sensors are accessible. The PyQt Client features a high-performance LAN Scanner. It spawns an internal thread pool with up to 50 concurrent workers executing parallel ICMP Ping Sweeps against the local subnet. It then parses the host OS's ARP table via Regex to extract MAC addresses and maps hostnames, syncing the physical topography instantly to the cloud.
+  </p>
+
+  <h3>6.3 Real-Time WebSocket Synchronization & Offline Resilience</h3>
+  <p class="body-text">
+    A persistent WebSocket connection binds every client application to the FastAPI server. A background <code style="color:black;">WebSocketWorker</code> runs a blocking <code style="color:black;">run_forever()</code> loop listening for JSON payloads. When an endpoint comes online, is renamed, or is deleted by an admin anywhere in the world, the backend triggers <code style="color:black;">ws_manager.broadcast()</code>. The client receives this payload and emits a PyQt Signal to the main thread, instantaneously triggering UI repaints without requiring manual API polling.
+  </p>
+  <p class="body-text">
+    Because industrial internet connections drop frequently, the ProjectX client caches all vital configurations inside an encrypted local SQLite database. If the internet fails, the UI falls back to this localized state, preventing crashes. When connectivity is restored, queued status changes are pushed upstream seamlessly.
+  </p>
+
+</div>
+</body>
+</html>
