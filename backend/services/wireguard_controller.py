@@ -1,5 +1,6 @@
 import asyncio
 import time
+import os
 from typing import Optional
 from sqlalchemy.orm import Session
 from models.device import Device
@@ -13,42 +14,59 @@ import sys
 
 WG_CMD = r"C:\Program Files\WireGuard\wg.exe" if sys.platform == "win32" else "wg"
 
+import subprocess
+
 async def _run_wg(*args) -> str:
     try:
-        proc = await asyncio.create_subprocess_exec(
-            WG_CMD, *args,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
+        # Use subprocess.run to avoid NotImplementedError on Windows Selector loops
+        result = await asyncio.to_thread(
+            subprocess.run,
+            [WG_CMD, *args],
+            capture_output=True,
+            text=True
         )
-        stdout, stderr = await proc.communicate()
-        if proc.returncode == 0:
-            return stdout.decode().strip()
+        if result.returncode == 0:
+            return result.stdout.strip()
         return ""
     except Exception:
         return ""
 
 async def get_server_public_key(interface: str = "wg0") -> str:
-    return await _run_wg("show", interface, "public-key")
+    key = await _run_wg("show", interface, "public-key")
+    if key:
+        return key
+    
+    # Fallback to the first active interface
+    interfaces_str = await _run_wg("show", "interfaces")
+    if interfaces_str:
+        first_iface = interfaces_str.split()[0]
+        return await _run_wg("show", first_iface, "public-key")
+        
+    return ""
 
 async def generate_keypair() -> tuple[str, str]:
     try:
-        priv_proc = await asyncio.create_subprocess_exec(
-            WG_CMD, "genkey",
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+        # Generate private key
+        priv_result = await asyncio.to_thread(
+            subprocess.run,
+            [WG_CMD, "genkey"],
+            capture_output=True,
+            text=True
         )
-        priv_out, _ = await priv_proc.communicate()
-        priv_key = priv_out.decode().strip()
+        priv_key = priv_result.stdout.strip()
         
         if not priv_key:
             return "", ""
             
-        pub_proc = await asyncio.create_subprocess_exec(
-            WG_CMD, "pubkey",
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+        # Generate public key from private key
+        pub_result = await asyncio.to_thread(
+            subprocess.run,
+            [WG_CMD, "pubkey"],
+            input=priv_key,
+            capture_output=True,
+            text=True
         )
-        pub_out, _ = await pub_proc.communicate(input=priv_key.encode())
-        pub_key = pub_out.decode().strip()
+        pub_key = pub_result.stdout.strip()
         
         return priv_key, pub_key
     except Exception:
@@ -57,14 +75,118 @@ async def generate_keypair() -> tuple[str, str]:
 async def _save_conf(interface: str):
     if sys.platform != "win32":
         try:
-            proc = await asyncio.create_subprocess_exec("wg-quick", "save", interface)
-            await proc.communicate()
+            await asyncio.to_thread(
+                subprocess.run,
+                ["wg-quick", "save", interface],
+                capture_output=True
+            )
         except Exception:
             pass
+
+async def sync_windows_peers(interface: str, peers: list[tuple[str, str]]) -> bool:
+    """
+    On Windows, wg set fails with Permission Denied because the WireGuard Manager
+    strictly locks the interface to SYSTEM. We must rewrite the conf file and
+    bounce the WireGuard service.
+    peers is a list of (public_key, allowed_ip) tuples.
+    """
+    if sys.platform != "win32":
+        return False
+        
+    conf_path = f"C:\\Program Files\\WireGuard\\{interface}.conf"
+    if not os.path.exists(conf_path):
+        return False
+        
+    try:
+        # Read existing conf and keep only the [Interface] block
+        with open(conf_path, "r") as f:
+            lines = f.readlines()
+            
+        interface_lines = []
+        for line in lines:
+            if line.strip() == "[Peer]":
+                break
+            # Only keep non-empty lines to prevent WireGuard parser from breaking
+            if line.strip():
+                interface_lines.append(line.strip() + "\n")
+            
+        # Append all new peers
+        new_conf = "".join(interface_lines)
+        for pub_key, allowed_ip in peers:
+            new_conf += f"\n[Peer]\nPublicKey = {pub_key}\nAllowedIPs = {allowed_ip}/32\n"
+            
+        with open(conf_path, "w") as f:
+            f.write(new_conf)
+            
+        # Bounce the tunnel service using wireguard.exe, not wg.exe!
+        WIREGUARD_EXE = r"C:\Program Files\WireGuard\wireguard.exe"
+        
+        await asyncio.to_thread(
+            subprocess.run,
+            [WIREGUARD_EXE, "/uninstalltunnelservice", interface],
+            capture_output=True
+        )
+        
+        await asyncio.to_thread(
+            subprocess.run,
+            [WIREGUARD_EXE, "/installtunnelservice", conf_path],
+            capture_output=True
+        )
+        
+        # When the service is reinstalled, Windows resets IP Forwarding to Disabled.
+        # We must re-enable it for the Hub-and-Spoke routing to work.
+        # We MUST also enable WeakHostSend and WeakHostReceive to allow Hairpin routing
+        # (routing packets back out the same interface they came in on).
+        await asyncio.to_thread(
+            subprocess.run,
+            ["powershell", "-Command", f"Set-NetIPInterface -InterfaceAlias {interface} -Forwarding Enabled -WeakHostSend Enabled -WeakHostReceive Enabled"],
+            capture_output=True
+        )
+        
+        return True
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        print(f"Failed to sync Windows peers: {e}")
+        return False
 
 async def add_peer(public_key: str, allowed_ip: str, interface: str = "wg0") -> bool:
     if not allowed_ip or not public_key:
         return False
+        
+    if sys.platform == "win32":
+        from database import SessionLocal
+        from models.device import Device
+        db = SessionLocal()
+        try:
+            # Fetch all approved peers to rebuild the config completely
+            devices = db.query(Device).filter(
+                Device.tunnel_type == "wireguard", 
+                Device.wg_public_key.isnot(None), 
+                Device.wg_ip.isnot(None),
+                Device.is_approved == True
+            ).all()
+            
+            # Make sure to include the new peer if it's not yet in the DB or not yet approved
+            peers = []
+            found_new = False
+            for d in devices:
+                t_iface = d.tenant.wg_server_interface if d.tenant and d.tenant.wg_server_interface else "wg0"
+                if t_iface == interface:
+                    peers.append((d.wg_public_key, d.wg_ip))
+                    if d.wg_public_key == public_key:
+                        found_new = True
+                        
+            if not found_new:
+                peers.append((public_key, allowed_ip))
+                
+            return await sync_windows_peers(interface, peers)
+        except Exception as e:
+            print(f"Failed to add peer on Windows: {e}")
+            return False
+        finally:
+            db.close()
+            
     # wg set <interface> peer <pubkey> allowed-ips <ip>/32
     res = await _run_wg("set", interface, "peer", public_key, "allowed-ips", f"{allowed_ip}/32")
     await _save_conf(interface)
@@ -73,6 +195,34 @@ async def add_peer(public_key: str, allowed_ip: str, interface: str = "wg0") -> 
 async def remove_peer(public_key: str, interface: str = "wg0") -> bool:
     if not public_key:
         return False
+        
+    if sys.platform == "win32":
+        from database import SessionLocal
+        from models.device import Device
+        db = SessionLocal()
+        try:
+            # Fetch all approved peers to rebuild the config completely
+            devices = db.query(Device).filter(
+                Device.tunnel_type == "wireguard", 
+                Device.wg_public_key.isnot(None), 
+                Device.wg_ip.isnot(None),
+                Device.is_approved == True
+            ).all()
+            
+            peers = []
+            for d in devices:
+                t_iface = d.tenant.wg_server_interface if d.tenant and d.tenant.wg_server_interface else "wg0"
+                # Exclude the peer we are removing
+                if t_iface == interface and d.wg_public_key != public_key:
+                    peers.append((d.wg_public_key, d.wg_ip))
+                        
+            return await sync_windows_peers(interface, peers)
+        except Exception as e:
+            print(f"Failed to remove peer on Windows: {e}")
+            return False
+        finally:
+            db.close()
+            
     # wg set <interface> peer <pubkey> remove
     res = await _run_wg("set", interface, "peer", public_key, "remove")
     await _save_conf(interface)
@@ -82,6 +232,16 @@ async def check_peer_status(public_key: str, interface: str = "wg0") -> str:
     if not public_key:
         return "offline"
     dump = await _run_wg("show", interface, "dump")
+    if not dump:
+        # Fallback to the first active interface
+        interfaces_str = await _run_wg("show", "interfaces")
+        if interfaces_str:
+            first_iface = interfaces_str.split()[0]
+            dump = await _run_wg("show", first_iface, "dump")
+            
+    if not dump:
+        return "offline"
+
     for line in dump.split("\n"):
         parts = line.split("\t")
         if len(parts) >= 6 and parts[0] == public_key:
@@ -97,6 +257,16 @@ async def check_peer_status(public_key: str, interface: str = "wg0") -> str:
 async def get_all_peer_statuses(interface: str = "wg0") -> dict:
     statuses = {}
     dump = await _run_wg("show", interface, "dump")
+    if not dump:
+        # Fallback to the first active interface
+        interfaces_str = await _run_wg("show", "interfaces")
+        if interfaces_str:
+            first_iface = interfaces_str.split()[0]
+            dump = await _run_wg("show", first_iface, "dump")
+            
+    if not dump:
+        return statuses
+
     for line in dump.split("\n"):
         parts = line.split("\t")
         if len(parts) >= 6:
@@ -126,22 +296,27 @@ def assign_ip_from_pool(db: Session, tenant_id: int) -> str:
             return ip
     return f"10.{t_subnet}.0.254"
 
-def generate_client_config(private_key: str, assigned_ip: str, server_pubkey: str, server_endpoint: str) -> str:
+def generate_client_config(private_key: str, assigned_ip: str, server_pubkey: str, server_endpoint: str, other_peers: list = None) -> str:
     # If the client provides a private key, we could include it, but the instruction 
     # said private keys must never be sent to backend. 
     # Thus, the client replaces it or we just generate the rest and client writes it.
-    # The prompt actually says: Returns {assigned_ip, server_pubkey, server_endpoint, config} 
-    # where config is the full .conf file content ready to be written by the client.
-    # But wait: "Private keys must never be sent to the backend or logged". 
-    # If so, we can't put PrivateKey in the config here if we don't have it.
-    # Let's put a placeholder the client can replace, or let client use write_config().
-    return f"""[Interface]
+    
+    if assigned_ip.startswith("10."):
+        # Route the entire ProjectX subnet (10.0.0.0/8) through the VPN 
+        # so clients can reach the Hub (10.0.0.1) AND other peers (10.x.x.x)
+        allowed_ips = "10.0.0.0/8"
+    else:
+        allowed_ips = "10.0.0.0/8"
+
+    conf = f"""[Interface]
 PrivateKey = {private_key if private_key else 'REPLACE_ME'}
 Address = {assigned_ip}/32
 
 [Peer]
 PublicKey = {server_pubkey}
 Endpoint = {server_endpoint}
-AllowedIPs = 10.0.0.0/24
+AllowedIPs = {allowed_ips}
 PersistentKeepalive = 25
 """
+
+    return conf

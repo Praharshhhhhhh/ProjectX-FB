@@ -51,6 +51,13 @@ class DashboardPage(QWidget):
         self.api = api
         self.user = user
         self._build()
+        # pyrefly: ignore [missing-import]
+        from services.websocket_client import ws_client
+        ws_client.alert_received.connect(self._show_ws_alert)
+
+    def _show_ws_alert(self, message: str):
+        if hasattr(self, "_alert"):
+            self._alert.show_error(message)
 
     def _build(self):
         scroll = QScrollArea()
@@ -60,6 +67,9 @@ class DashboardPage(QWidget):
         lay = QVBoxLayout(inner)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(20)
+
+        self._alert = AlertBar()
+        lay.addWidget(self._alert)
 
         role = self.user.get("role", "")
         is_master = role in ("master", "second_master")
@@ -1821,7 +1831,7 @@ class WgTunnelPage(QWidget):
         top_h = QHBoxLayout()
         title_v = QVBoxLayout()
         self.title_lbl = QLabel("WireGuard Tunnel")
-        self.title_lbl.setStyleSheet("font-size:24px;font-weight:700;color:#fff;margin-bottom:4px")
+        self.title_lbl.setStyleSheet("font-size:24px;font-weight:700;color:#0f172a;margin-bottom:4px")
         self.sub_lbl = QLabel("No server claimed yet")
         self.sub_lbl.setStyleSheet("font-size:14px;color:#8b949e")
         title_v.addWidget(self.title_lbl)
@@ -1846,6 +1856,15 @@ class WgTunnelPage(QWidget):
         """)
         self.refresh_btn.clicked.connect(self.refresh)
         top_h.addWidget(self.refresh_btn)
+
+        self.disconnect_btn = QPushButton("Disconnect Tunnel")
+        self.disconnect_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.disconnect_btn.setStyleSheet("""
+            QPushButton { background:#dc2626; color:white; border-radius:6px; padding:8px 16px; font-weight:600; }
+            QPushButton:hover { background:#ef4444; }
+        """)
+        self.disconnect_btn.clicked.connect(self._disconnect_tunnel)
+        top_h.addWidget(self.disconnect_btn)
 
         root.addLayout(top_h)
 
@@ -1895,6 +1914,19 @@ class WgTunnelPage(QWidget):
 
         root.addWidget(self.content_w)
         self.content_w.hide()
+
+    def _disconnect_tunnel(self):
+        try:
+            # pyrefly: ignore [missing-import]
+            from services.wireguard_local import disconnect
+            # pyrefly: ignore [missing-import]
+            from config import WG_INTERFACE
+            disconnect(WG_INTERFACE)
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.information(self, "Disconnected", "WireGuard tunnel stopped locally. Restart the app to re-register.")
+        except Exception as e:
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.critical(self, "Error", f"Failed to disconnect: {e}")
 
     def refresh(self):
         if hasattr(self, "_w") and self._w.isRunning():

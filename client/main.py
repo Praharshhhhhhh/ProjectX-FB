@@ -271,6 +271,16 @@ class App:
 
     def run(self) -> int:
         self.root.showMaximized()
+        # pyrefly: ignore [missing-import]
+        from widgets.common import cleanup_workers
+        # pyrefly: ignore [missing-import]
+        from services.websocket_client import ws_client
+        
+        def _on_quit():
+            cleanup_workers()
+            ws_client.disconnect_ws()
+            
+        self.qt_app.aboutToQuit.connect(_on_quit)
         return self.qt_app.exec()
 
 

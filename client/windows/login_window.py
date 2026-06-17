@@ -66,13 +66,18 @@ class _DemoRow(QFrame):
 
 class _LoginWorker(QThread):
     success = pyqtSignal(dict, dict)
-    error   = pyqtSignal(str)
+    error = pyqtSignal(str)
 
     def __init__(self, api, email, password):
         super().__init__()
-        self.api      = api
-        self.email    = email
+        self.api = api
+        self.email = email
         self.password = password
+
+    def start(self, *args, **kwargs):
+        from widgets.common import _active_workers
+        _active_workers.add(self)
+        super().start(*args, **kwargs)
 
     def run(self):
         try:

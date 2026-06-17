@@ -24,6 +24,11 @@ class ActivateWorker(QThread):
         self.api, self.key_code, self.email = api, key_code, email
         self.full_name, self.password = full_name, password
 
+    def start(self, *args, **kwargs):
+        from widgets.common import _active_workers
+        _active_workers.add(self)
+        super().start(*args, **kwargs)
+
     def run(self):
         try:
             data = self.api.activate_key(self.key_code, self.email, self.full_name, self.password)
@@ -35,6 +40,9 @@ class ActivateWorker(QThread):
                 self.error.emit("Activation failed")
         except Exception as e:
             self.error.emit(str(e))
+        finally:
+            from widgets.common import _active_workers
+            _active_workers.discard(self)
 
 
 class ActivateKeyWindow(QWidget):

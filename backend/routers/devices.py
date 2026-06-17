@@ -29,21 +29,39 @@ import asyncio
 # pyrefly: ignore [missing-import]
 from services.websocket_manager import manager
 from services.tunnel_dispatcher import decide_tunnel_type, provision_device, deprovision_device
-from services.nat_engine import write_iptables_nat_rule, remove_iptables_nat_rule
+from services.nat_engine import write_iptables_nat_rule, remove_iptables_nat_rule, _applied_rules
 import json
 from fastapi.responses import PlainTextResponse, Response
+import logging
+from ipaddress import ip_network, IPv4Network
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/devices", tags=["devices"])
+
+def _nets_overlap(a: IPv4Network, b: IPv4Network) -> bool:
+    return a.overlaps(b)
 
 def check_subnet_overlap(new_subnet: str, device_id: int, db: Session) -> list[Device]:
     if not new_subnet:
         return []
-    others = db.query(Device).filter(
+    try:
+        new_net = ip_network(new_subnet, strict=False)
+    except ValueError:
+        return []
+    candidates = db.query(Device).filter(
         Device.id != device_id,
         Device.lan_subnet.isnot(None),
-        Device.lan_subnet == new_subnet
     ).all()
-    return others
+    result = []
+    for d in candidates:
+        try:
+            other_net = ip_network(d.lan_subnet, strict=False)
+            if _nets_overlap(new_net, other_net):
+                result.append(d)
+        except ValueError:
+            continue
+    return result
 
 def assign_next_nat_pool(db: Session) -> str:
     used_pools = db.query(Device.nat_virtual_pool).filter(Device.nat_virtual_pool.isnot(None)).all()
@@ -61,18 +79,52 @@ async def _handle_subnet_overlap(device: Device, db: Session):
     overlaps = check_subnet_overlap(device.lan_subnet, device.id, db)
     if overlaps:
         if device.tunnel_type == "wireguard":
+            existing_rule = _applied_rules.get(device.id)
+            subnet_changed = (
+                existing_rule is not None
+                and existing_rule.get("real_subnet") != device.lan_subnet
+            )
+            if device.nat_virtual_pool and subnet_changed:
+                # Remove the stale rule before rewriting
+                await remove_iptables_nat_rule(device.id)
+                device.nat_virtual_pool = None
+
             if not device.nat_virtual_pool:
                 virtual_pool = assign_next_nat_pool(db)
-                await write_iptables_nat_rule(device.id, virtual_pool, device.lan_subnet)
-                device.nat_virtual_pool = virtual_pool
-                db.commit()
+                ok = await write_iptables_nat_rule(
+                    device.id, virtual_pool, device.lan_subnet, device.lan_ip
+                )
+                if ok:
+                    device.nat_virtual_pool = virtual_pool
+                    db.commit()
         else:
             overlap_ids = [o.id for o in overlaps]
-            import logging
-            logger = logging.getLogger(__name__)
             logger.warning(
                 f"ZeroTier_Conflict_Alert: device {device.id} subnet {device.lan_subnet} "
                 f"overlaps with {overlap_ids}. Manual review required."
+            )
+            # Write to audit log so it appears in the owner dashboard
+            log(
+                db,
+                "subnet_conflict",
+                (
+                    f"LAN subnet conflict detected on '{device.name}' "
+                    f"({device.lan_subnet}). Overlaps with device IDs: {overlap_ids}. "
+                    f"Manual review required — ZeroTier conflicts cannot be auto-resolved."
+                ),
+                tenant_id=device.tenant_id,
+                level=AuditLevel.warning,
+            )
+            # Push a real-time alert to all connected clients in this tenant
+            await manager.broadcast_to_tenant(
+                device.tenant_id,
+                {
+                    "event": "alert",
+                    "message": (
+                        f"⚠ LAN subnet conflict on '{device.name}' "
+                        f"({device.lan_subnet}) — manual review required"
+                    ),
+                },
             )
 
 
@@ -200,6 +252,7 @@ async def register_wg_device(req: WgDeviceRegister, current_user: Annotated[User
 
     assigned_ip = wireguard_controller.assign_ip_from_pool(db, current_user.tenant_id)
     server_pubkey = await wireguard_controller.get_server_public_key(interface=tenant.wg_server_interface if tenant else "wg0")
+    
     config_str = wireguard_controller.generate_client_config(priv_key, assigned_ip, server_pubkey, server_endpoint)
     
     device = Device(
@@ -374,7 +427,13 @@ async def approve_device(device_id: int, current_user: Annotated[User, Depends(r
         user_name=current_user.full_name, level=AuditLevel.success)
 
     db.refresh(device)
+    await _handle_subnet_overlap(device, db)
     await manager.broadcast_to_tenant(current_user.tenant_id, {"event": "device_updated", "device": _device_dict(device)})
+    
+    # Broadcast mesh update so all clients re-fetch their config to include the new peer
+    if device.tunnel_type == "wireguard":
+        await manager.broadcast_to_tenant(current_user.tenant_id, {"event": "mesh_updated"})
+        
     return {"message": "Device approved and activated"}
 
 
@@ -610,7 +669,7 @@ def _device_dict(d: Device, hide_network: bool = False) -> dict:
     from sqlalchemy.orm import object_session
     db = object_session(d)
     has_conflict = False
-    if db and d.lan_subnet and d.tunnel_type != "wireguard":
+    if db and d.lan_subnet:
         has_conflict = len(check_subnet_overlap(d.lan_subnet, d.id, db)) > 0
     
     return {
@@ -626,5 +685,6 @@ def _device_dict(d: Device, hide_network: bool = False) -> dict:
         "lan_devices": [{"id": l.id, "name": l.name, "ip_address": l.ip_address, "mac_address": l.mac_address} for l in d.lan_devices],
         "is_shared": hide_network,
         "connection_info": connection_info,
-        "has_conflict": has_conflict
+        "has_conflict": has_conflict,
+        "nat_virtual_pool": d.nat_virtual_pool
     }

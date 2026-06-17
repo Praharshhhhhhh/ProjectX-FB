@@ -17,15 +17,24 @@ class ConnectWorker(QThread):
         self.api = api
         self.connect_flag = connect
 
+    def start(self, *args, **kwargs):
+        from widgets.common import _active_workers
+        _active_workers.add(self)
+        super().start(*args, **kwargs)
+
     def run(self):
-        from services.tunnel_manager import TunnelManager
-        manager = TunnelManager(self.device)
-        if hasattr(self, 'connect_flag') and self.connect_flag:
-            ok = manager.connect(self.api)
-            self.done.emit(ok, "connected" if ok else "error")
-        else:
-            ok = manager.disconnect()
-            self.done.emit(ok, "disconnected")
+        try:
+            from services.tunnel_manager import TunnelManager
+            manager = TunnelManager(self.device)
+            if hasattr(self, 'connect_flag') and self.connect_flag:
+                ok = manager.connect(self.api)
+                self.done.emit(ok, "connected" if ok else "error")
+            else:
+                ok = manager.disconnect()
+                self.done.emit(ok, "disconnected")
+        finally:
+            from widgets.common import _active_workers
+            _active_workers.discard(self)
 
 class ShareDeviceDialog(QDialog):
     def __init__(self, device: dict, api, parent=None):
@@ -191,6 +200,11 @@ class ScanWorker(QThread):
         self.device_id = device_id
         self.local_ip = local_ip
 
+    def start(self, *args, **kwargs):
+        from widgets.common import _active_workers
+        _active_workers.add(self)
+        super().start(*args, **kwargs)
+
     def run(self):
         try:
             import subprocess
@@ -249,6 +263,9 @@ class ScanWorker(QThread):
             self.done.emit(devices)
         except Exception as e:
             self.error.emit(str(e))
+        finally:
+            from widgets.common import _active_workers
+            _active_workers.discard(self)
 
 
 class DeviceCard(QFrame):

@@ -85,13 +85,29 @@ async def _rebuild_wireguard_peers():
     from database import SessionLocal
     from models.device import Device
     from services import wireguard_controller
+    import sys
+    
     db = SessionLocal()
     try:
         devices = db.query(Device).filter(Device.tunnel_type == "wireguard", Device.wg_public_key.isnot(None), Device.wg_ip.isnot(None)).all()
-        for device in devices:
-            tenant_interface = device.tenant.wg_server_interface if device.tenant else "wg0"
-            await wireguard_controller.add_peer(device.wg_public_key, device.wg_ip, interface=tenant_interface)
-        print(f"✅ Rebuilt {len(devices)} WireGuard peers from DB")
+        
+        if sys.platform == "win32":
+            # Group peers by interface
+            interfaces = {}
+            for device in devices:
+                tenant_interface = device.tenant.wg_server_interface if device.tenant and device.tenant.wg_server_interface else "wg0"
+                if tenant_interface not in interfaces:
+                    interfaces[tenant_interface] = []
+                interfaces[tenant_interface].append((device.wg_public_key, device.wg_ip))
+                
+            for iface, peers in interfaces.items():
+                await wireguard_controller.sync_windows_peers(iface, peers)
+            print(f"✅ Rebuilt {len(devices)} WireGuard peers using native Windows service bounce")
+        else:
+            for device in devices:
+                tenant_interface = device.tenant.wg_server_interface if device.tenant and device.tenant.wg_server_interface else "wg0"
+                await wireguard_controller.add_peer(device.wg_public_key, device.wg_ip, interface=tenant_interface)
+            print(f"✅ Rebuilt {len(devices)} WireGuard peers from DB")
     except Exception as e:
         print(f"Failed to rebuild WireGuard peers: {e}")
     finally:

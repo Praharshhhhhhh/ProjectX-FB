@@ -54,7 +54,7 @@ class DeviceApprove(BaseModel):
 
 class DeviceRegister(BaseModel):
     zerotier_node_id: str
-    network_id: str
+    network_id: Optional[str] = None
     hostname: str = "Unknown Device"
     zerotier_ip: Optional[str] = None
     lan_ip: Optional[str] = None

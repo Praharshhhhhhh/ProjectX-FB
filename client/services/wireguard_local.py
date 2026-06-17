@@ -62,7 +62,7 @@ Address = {assigned_ip}/32
 [Peer]
 PublicKey = {server_pubkey}
 Endpoint = {server_endpoint}
-AllowedIPs = 10.0.0.0/24
+AllowedIPs = 10.0.0.0/8
 PersistentKeepalive = 25
 """
     try:
@@ -101,7 +101,7 @@ def disconnect(config_name: str) -> bool:
         # Usually /uninstalltunnelservice takes the interface name
         name = os.path.basename(config_name).replace(".conf", "")
         wg_manager = r"C:\Program Files\WireGuard\wireguard.exe"
-        cmd = [wg_manager, "/uninstalltunnelservice", config_name]
+        cmd = [wg_manager, "/uninstalltunnelservice", name]
     else:
         name = os.path.basename(config_name).replace(".conf", "")
         cmd = ["wg-quick", "down", name]

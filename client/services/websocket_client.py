@@ -58,6 +58,7 @@ class WsClient(QObject):
     sync_toggle_received = pyqtSignal(int, str, bool)
     user_updated = pyqtSignal()
     lan_device_renamed = pyqtSignal(int, int, str)
+    alert_received = pyqtSignal(str)
 
     def __init__(self):
         super().__init__()
@@ -98,6 +99,8 @@ class WsClient(QObject):
                 payload.get("lan_device_id"),
                 payload.get("new_name")
             )
+        elif event == "alert":
+            self.alert_received.emit(payload.get("message"))
 
 # Global singleton
 ws_client = WsClient()

@@ -77,6 +77,15 @@ def icon_label(
 # ── Worker thread for API calls ───────────────────────────────────────────────
 _active_workers = set()
 
+def cleanup_workers():
+    for w in list(_active_workers):
+        try:
+            w.terminate()
+            w.wait()
+        except Exception:
+            pass
+
+
 class Worker(QThread):
     result = pyqtSignal(object)
     error = pyqtSignal(str)
