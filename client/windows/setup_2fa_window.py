@@ -23,6 +23,11 @@ class Setup2FAWorker(QThread):
         super().__init__()
         self.api = api
 
+    def start(self, *args, **kwargs):
+        from widgets.common import _active_workers
+        _active_workers.add(self)
+        super().start(*args, **kwargs)
+
     def run(self):
         try:
             data = self.api.setup_2fa()
@@ -34,6 +39,9 @@ class Setup2FAWorker(QThread):
                 self.error.emit("Error loading 2FA")
         except Exception as e:
             self.error.emit(str(e))
+        finally:
+            from widgets.common import _active_workers
+            _active_workers.discard(self)
 
 
 class Setup2FAWindow(QWidget):
