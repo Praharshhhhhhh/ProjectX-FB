@@ -1390,7 +1390,7 @@ def _fmt_date(iso: str) -> str:
     try:
         from datetime import datetime
         dt = datetime.fromisoformat(iso.replace("Z", "+00:00"))
-        return dt.strftime("%b %d, %Y  %I:%M %p")
+        return dt.astimezone().strftime("%b %d, %Y  %I:%M %p")
     except Exception:
         # pyrefly: ignore [unnecessary-type-conversion]
         return str(iso)[:16]

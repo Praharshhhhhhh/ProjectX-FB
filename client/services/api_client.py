@@ -85,8 +85,19 @@ class APIClient:
                     self._req("PATCH", f"/api/users/{payload['user_id']}/trust", json={"is_trusted": payload['is_trusted']})
                 elif action == "revoke_device_share":
                     self._req("DELETE", f"/api/device-shares/{payload['share_id']}")
+                elif action == "create_device_share":
+                    self._req("POST", "/api/device-shares", json={"device_id": payload['device_id'], "target_tenant_id": payload['target_tenant_id']})
                 elif action == "change_password":
                     self._req("POST", "/api/auth/change-password", json={"new_password": payload['new_password']})
+                elif action == "update_user_profile":
+                    self._req("PATCH", f"/api/users/{payload['user_id']}", json={"email": payload.get("email"), "full_name": payload.get("full_name")})
+                elif action == "assign_devices":
+                    current = set(self._req("GET", f"/api/users/{payload['user_id']}/assigned-devices"))
+                    target = set(payload["device_ids"])
+                    for cid in current - target:
+                        self._req("DELETE", f"/api/users/{payload['user_id']}/assign-device/{cid}")
+                    for did in target - current:
+                        self._req("POST", f"/api/users/{payload['user_id']}/assign-device", json={"device_id": did})
                 
                 cache_service.remove_offline_action(action_id)
             except httpx.HTTPStatusError as e:
@@ -252,6 +263,41 @@ class APIClient:
             body["password"] = password
         return self._req("POST", "/api/users/", json=body)
 
+    def update_user_profile(self, user_id: int, email: str = None, full_name: str = None) -> dict:
+        body = {}
+        if email is not None:
+            body["email"] = email
+        if full_name is not None:
+            body["full_name"] = full_name
+            
+        try:
+            return self._req("PATCH", f"/api/users/{user_id}", json=body)
+        except (httpx.RequestError, OSError):
+            self._queue_offline_action("update_user_profile", {"user_id": user_id, "email": email, "full_name": full_name})
+            from services.cache_service import cache_service
+            # Update /api/users/ cache
+            data, _ = cache_service.get_cache("/api/users/")
+            if data and isinstance(data, list):
+                for u in data:
+                    if u.get("id") == user_id:
+                        if email is not None:
+                            u["email"] = email
+                        if full_name is not None:
+                            u["full_name"] = full_name
+                        break
+                cache_service.set_cache("/api/users/", data)
+            
+            # Update /api/me cache
+            me_data, _ = cache_service.get_cache("/api/me")
+            if me_data and isinstance(me_data, dict) and me_data.get("id") == user_id:
+                if email is not None:
+                    me_data["email"] = email
+                if full_name is not None:
+                    me_data["full_name"] = full_name
+                cache_service.set_cache("/api/me", me_data)
+                
+            return {"message": "Queued for offline sync"}
+
     # pyrefly: ignore [bad-function-definition]
     def delete_user(self, user_id: int, totp_code: str = None) -> dict:
         url = f"/api/users/{user_id}"
@@ -334,13 +380,22 @@ class APIClient:
         return self._req("GET", f"/api/users/{user_id}/assigned-devices")
 
     def assign_devices(self, user_id: int, device_ids: list[int]) -> dict:
-        current = set(self.get_user_assigned_devices(user_id))
-        target = set(device_ids)
-        for cid in current - target:
-            self._req("DELETE", f"/api/users/{user_id}/assign-device/{cid}")
-        for did in target - current:
-            self._req("POST", f"/api/users/{user_id}/assign-device", json={"device_id": did})
-        return {"message": "Devices updated"}
+        try:
+            current = set(self.get_user_assigned_devices(user_id))
+            target = set(device_ids)
+            for cid in current - target:
+                self._req("DELETE", f"/api/users/{user_id}/assign-device/{cid}")
+            for did in target - current:
+                self._req("POST", f"/api/users/{user_id}/assign-device", json={"device_id": did})
+            
+            from services.cache_service import cache_service
+            cache_service.set_cache(f"/api/users/{user_id}/assigned-devices", device_ids)
+            return {"message": "Devices updated"}
+        except (httpx.RequestError, OSError):
+            self._queue_offline_action("assign_devices", {"user_id": user_id, "device_ids": device_ids})
+            from services.cache_service import cache_service
+            cache_service.set_cache(f"/api/users/{user_id}/assigned-devices", device_ids)
+            return {"message": "Queued for offline sync"}
 
     def sync_lan_devices(self, device_id: int, devices: list) -> dict:
         return self._req("POST", f"/api/lan-devices/{device_id}/sync", json={"devices": devices})
@@ -358,7 +413,23 @@ class APIClient:
         return self._req("GET", "/api/device-shares/tenant-directory")
 
     def create_device_share(self, device_id: int, target_tenant_id: int) -> dict:
-        return self._req("POST", "/api/device-shares", json={"device_id": device_id, "target_tenant_id": target_tenant_id})
+        try:
+            return self._req("POST", "/api/device-shares", json={"device_id": device_id, "target_tenant_id": target_tenant_id})
+        except (httpx.RequestError, OSError):
+            self._queue_offline_action("create_device_share", {"device_id": device_id, "target_tenant_id": target_tenant_id})
+            from services.cache_service import cache_service
+            shares, _ = cache_service.get_cache(f"/api/device-shares/device/{device_id}")
+            if shares is not None:
+                import time
+                shares.append({
+                    "id": int(time.time()),
+                    "device_id": device_id,
+                    "target_tenant_id": target_tenant_id,
+                    "target_tenant": {"company_name": "Queued for sync..."},
+                    "created_at": "Offline"
+                })
+                cache_service.set_cache(f"/api/device-shares/device/{device_id}", shares)
+            return {"message": "Queued for offline sync"}
 
     def revoke_device_share(self, share_id: int) -> dict:
         try:

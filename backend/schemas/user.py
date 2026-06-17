@@ -29,6 +29,7 @@ class UserOut(BaseModel):
 
 class UserUpdate(BaseModel):
     full_name: Optional[str] = None
+    email: Optional[EmailStr] = None
     is_active: Optional[bool] = None
 
 

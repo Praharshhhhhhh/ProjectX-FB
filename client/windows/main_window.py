@@ -759,6 +759,9 @@ class ViewSharesDialog(QDialog):
 #  USERS PAGE
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
+# ═══════════════════════════════════════════════════════════════════════════════
+
 class AssignDevicesDialog(QDialog):
     def __init__(self, user_id: int, user_name: str, user_role: str, api, parent=None):
         super().__init__(parent)
@@ -1231,6 +1234,8 @@ class UsersPage(QWidget):
                     """)
                 fa_btn.clicked.connect(lambda _, uid=u["id"], cur=is_forced: self._toggle_force_2fa(uid, cur))
 
+
+
             assign_btn = QPushButton("Assign")
             assign_btn.setObjectName("btn-sm")
             assign_btn.setFixedSize(65, 30)
@@ -1510,6 +1515,8 @@ class AuditPage(QWidget):
 #  SETTINGS PAGE
 # ═══════════════════════════════════════════════════════════════════════════════
 class SettingsPage(QWidget):
+    profile_updated = pyqtSignal(str)
+
     def __init__(self, api, user: dict):
         super().__init__()
         self.api = api
@@ -1542,15 +1549,19 @@ class SettingsPage(QWidget):
         pl.addWidget(_lbl("Email", muted=True))
         self._email_in = QLineEdit()
         self._email_in.setText(self.user.get("email", ""))
-        self._email_in.setEnabled(False)
         pl.addWidget(self._email_in)
+        
+        warn_lbl = QLabel("Note: Changing your email will compulsorily disable your 2FA.")
+        warn_lbl.setStyleSheet("color: #b45309; font-size: 11px;")
+        pl.addWidget(warn_lbl)
+
         pl.addWidget(_lbl("Role", muted=True))
         role_in = QLineEdit(self.user.get("role", "").replace("_", " ").title())
         role_in.setEnabled(False)
         pl.addWidget(role_in)
         save_btn = QPushButton("Save Changes")
         save_btn.setStyleSheet("QPushButton{background:#2563eb;color:white;border:none;border-radius:8px;padding:9px 18px;font-size:14px;font-weight:600} QPushButton:hover{background:#1d4ed8}")
-        save_btn.clicked.connect(lambda: self._alert.show_success("Profile saved"))
+        save_btn.clicked.connect(self._save_profile)
         pl.addWidget(save_btn)
         pl.addStretch()
         grid.addWidget(pc)
@@ -1774,6 +1785,21 @@ class SettingsPage(QWidget):
         self._pw.result.connect(lambda _: self._alert.show_success("Password changed successfully"))
         self._pw.error.connect(self._alert.show_error)
         self._pw.start()
+
+    def _save_profile(self):
+        new_name = self._name_in.text().strip()
+        new_email = self._email_in.text().strip()
+        if not new_name or not new_email:
+            self._alert.show_error("Name and Email cannot be empty")
+            return
+        
+        self._pw_w = Worker(self.api.update_user_profile, self.user["id"], new_email, new_name)
+        def on_ok(res):
+            self._alert.show_success("Profile saved")
+            self.profile_updated.emit(new_name)
+        self._pw_w.result.connect(on_ok)
+        self._pw_w.error.connect(self._alert.show_error)
+        self._pw_w.start()
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  WG TUNNEL PAGE
@@ -2089,12 +2115,13 @@ class MainWindow(QMainWindow):
 
         user_w = QWidget(); user_w.setStyleSheet("border-bottom:1px solid rgba(255,255,255,0.06)")
         ul = QHBoxLayout(user_w); ul.setContentsMargins(18, 14, 18, 14); ul.setSpacing(12)
-        av = QLabel((self.user.get("full_name") or "U")[0].upper())
-        av.setFixedSize(38, 38); av.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        av.setStyleSheet("background:#2563eb;color:white;border-radius:19px;font-weight:700;font-size:15px")
-        ul.addWidget(av)
+        self._sidebar_av = QLabel((self.user.get("full_name") or "U")[0].upper())
+        self._sidebar_av.setFixedSize(38, 38); self._sidebar_av.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._sidebar_av.setStyleSheet("background:#2563eb;color:white;border-radius:19px;font-weight:700;font-size:15px")
+        ul.addWidget(self._sidebar_av)
         uc = QVBoxLayout(); uc.setSpacing(2)
-        uname = QLabel(self.user.get("full_name", "")); uname.setStyleSheet("font-weight:600;font-size:14px;color:#fff")
+        self._sidebar_uname = QLabel(self.user.get("full_name", ""))
+        self._sidebar_uname.setStyleSheet("font-weight:600;font-size:14px;color:#fff")
         try:
             # pyrefly: ignore [missing-import]
             from client.styles import ROLE_COLORS
@@ -2105,7 +2132,7 @@ class MainWindow(QMainWindow):
         bg, fg = ROLE_COLORS.get(role, ("#f1f5f9", "#64748b"))
         urole = QLabel(role.replace("_"," ").title())
         urole.setStyleSheet(f"background:{bg};color:{fg};padding:2px 8px;border:1px solid transparent;border-radius:10px;font-size:11px;font-weight:600")
-        uc.addWidget(uname)
+        uc.addWidget(self._sidebar_uname)
         uc.addWidget(urole, alignment=Qt.AlignmentFlag.AlignLeft)
         ul.addLayout(uc); ul.addStretch()
         sb.addWidget(user_w)
@@ -2190,6 +2217,7 @@ class MainWindow(QMainWindow):
         }
         self._pages["dashboard"].manage_devices_requested.connect(lambda: self._nav("devices"))
         self._pages["dashboard"].view_logs_requested.connect(lambda: self._nav("audit"))
+        self._pages["settings"].profile_updated.connect(self.update_sidebar_user)
         if self.is_master:
             # pyrefly: ignore [bad-typed-dict-key]
             self._pages["users"] = UsersPage(self.api)
@@ -2237,6 +2265,12 @@ class MainWindow(QMainWindow):
         self.api.token = None
         self.logged_out.emit()
         self.close()
+
+    def update_sidebar_user(self, full_name: str):
+        self.user["full_name"] = full_name
+        self._sidebar_uname.setText(full_name)
+        if full_name:
+            self._sidebar_av.setText(full_name[0].upper())
 
 def _confirm_delete(parent, title: str, body: str) -> bool:
     from PyQt6.QtWidgets import QMessageBox

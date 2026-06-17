@@ -8,7 +8,7 @@ from models import User, UserRole, Device
 # pyrefly: ignore [missing-import]
 from models.user_device_access import UserDeviceAccess
 # pyrefly: ignore [missing-import]
-from schemas.user import UserCreate, UserOut, TrustToggle, Force2FAToggle, AssignDeviceRequest, RoleUpdate
+from schemas.user import UserCreate, UserOut, TrustToggle, Force2FAToggle, AssignDeviceRequest, RoleUpdate, UserUpdate
 # pyrefly: ignore [missing-import]
 from routers.deps import get_current_user, require_master_or_above
 # pyrefly: ignore [missing-import]
@@ -99,6 +99,49 @@ def remove_user(user_id: int, current_user: Annotated[User, Depends(require_mast
         tenant_id=current_user.tenant_id, user_id=current_user.id,
         user_name=current_user.full_name, level=AuditLevel.warning)
     return {"message": "User removed"}
+
+
+@router.patch("/{user_id}")
+def update_user(user_id: int, req: UserUpdate, current_user: Annotated[User, Depends(require_master_or_above)], db: Annotated[Session, Depends(get_db)]):
+    if current_user.role == UserRole.system_owner:
+        user = db.query(User).filter(User.id == user_id).first()
+    else:
+        user = db.query(User).filter(User.id == user_id, User.tenant_id == current_user.tenant_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if req.full_name is not None:
+        user.full_name = req.full_name
+
+    if req.email is not None and req.email != user.email:
+        # Check uniqueness
+        existing = db.query(User).filter(User.email == req.email).first()
+        if existing:
+            raise HTTPException(status_code=400, detail="Email already in use")
+        
+        old_email = user.email
+        user.email = req.email
+        # Refactor 2FA as requested
+        if user.totp_enabled or user.totp_secret:
+            user.totp_enabled = False
+            user.totp_secret = None
+            log(db, "2fa_reset", f"2FA disabled for {user.email} due to email change",
+                tenant_id=current_user.tenant_id, user_id=current_user.id,
+                user_name=current_user.full_name, level=AuditLevel.warning)
+
+        log(db, "email_changed", f"Email changed from {old_email} to {user.email}",
+            tenant_id=current_user.tenant_id, user_id=current_user.id,
+            user_name=current_user.full_name, level=AuditLevel.warning)
+
+    if req.is_active is not None:
+        user.is_active = req.is_active
+
+    db.commit()
+    log(db, "profile_updated", f"Profile updated for {user.email}",
+        tenant_id=current_user.tenant_id, user_id=current_user.id,
+        user_name=current_user.full_name, level=AuditLevel.info)
+
+    return {"message": "Profile updated"}
 
 
 @router.patch("/{user_id}/trust")
