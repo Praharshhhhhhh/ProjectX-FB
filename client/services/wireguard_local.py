@@ -73,32 +73,40 @@ PersistentKeepalive = 25
     except Exception:
         return False
 
+def _run_with_elevation_fallback(cmd: list) -> bool:
+    try:
+        creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+        subprocess.run(cmd, capture_output=True, check=True, creationflags=creationflags)
+        return True
+    except subprocess.CalledProcessError:
+        if sys.platform == "win32":
+            try:
+                exe = cmd[0]
+                args_str = ", ".join(f"'{a}'" for a in cmd[1:])
+                ps_cmd = f"Start-Process -FilePath '{exe}' -ArgumentList {args_str} -Verb RunAs -WindowStyle Hidden -Wait"
+                subprocess.run(["powershell", "-Command", ps_cmd], check=True, creationflags=subprocess.CREATE_NO_WINDOW)
+                return True
+            except Exception:
+                return False
+        return False
+    except Exception:
+        return False
+
 def connect(config_name_or_path: str) -> bool:
-    # If the user passes just the name, construct path if needed, but the instructions say
-    # config_name -> wireguard.exe /installtunnelservice <path>
     if sys.platform == "win32":
-        # Windows requires the full path for installtunnelservice usually
-        # But we will assume config_name_or_path is the path if it ends in .conf
         path = config_name_or_path
         if not path.endswith(".conf"):
             path = os.path.join(WG_CONFIG_DIR, f"{config_name_or_path}.conf")
         wg_manager = r"C:\Program Files\WireGuard\wireguard.exe"
         cmd = [wg_manager, "/installtunnelservice", path]
     else:
-        # Linux wg-quick takes the config name (interface name)
         name = os.path.basename(config_name_or_path).replace(".conf", "")
         cmd = ["wg-quick", "up", name]
         
-    try:
-        creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
-        subprocess.run(cmd, capture_output=True, check=True, creationflags=creationflags)
-        return True
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        return False
+    return _run_with_elevation_fallback(cmd)
 
 def disconnect(config_name: str) -> bool:
     if sys.platform == "win32":
-        # Usually /uninstalltunnelservice takes the interface name
         name = os.path.basename(config_name).replace(".conf", "")
         wg_manager = r"C:\Program Files\WireGuard\wireguard.exe"
         cmd = [wg_manager, "/uninstalltunnelservice", name]
@@ -106,12 +114,7 @@ def disconnect(config_name: str) -> bool:
         name = os.path.basename(config_name).replace(".conf", "")
         cmd = ["wg-quick", "down", name]
         
-    try:
-        creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
-        subprocess.run(cmd, capture_output=True, check=True, creationflags=creationflags)
-        return True
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        return False
+    return _run_with_elevation_fallback(cmd)
 
 def get_status(config_name: str) -> str:
     name = os.path.basename(config_name).replace(".conf", "")

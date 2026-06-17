@@ -13,19 +13,28 @@ class WebSocketWorker(QThread):
         self.ws = None
         self._running = True
 
+    def start(self, *args, **kwargs):
+        from widgets.common import _active_workers
+        _active_workers.add(self)
+        super().start(*args, **kwargs)
+
     def run(self):
-        while self._running:
-            self.ws = websocket.WebSocketApp(
-                self.url,
-                on_message=self._on_message,
-                on_error=self._on_error,
-                on_close=self._on_close
-            )
-            self.ws.run_forever(ping_interval=20, ping_timeout=10)
-            
-            if self._running:
-                # Reconnect backoff
-                time.sleep(3)
+        try:
+            while self._running:
+                self.ws = websocket.WebSocketApp(
+                    self.url,
+                    on_message=self._on_message,
+                    on_error=self._on_error,
+                    on_close=self._on_close
+                )
+                self.ws.run_forever(ping_interval=20, ping_timeout=10)
+                
+                if self._running:
+                    # Reconnect backoff
+                    time.sleep(3)
+        finally:
+            from widgets.common import _active_workers
+            _active_workers.discard(self)
 
     def _on_message(self, ws, message):
         try:

@@ -120,6 +120,9 @@ class _LoginWorker(QThread):
                 self.error.emit("Login failed")
         except Exception as e:
             self.error.emit(str(e))
+        finally:
+            from widgets.common import _active_workers
+            _active_workers.discard(self)
 
 
 class LoginWindow(QWidget):

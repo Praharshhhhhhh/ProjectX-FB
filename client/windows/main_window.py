@@ -490,6 +490,13 @@ class DevicesPage(QWidget):
                     appr.setFixedSize(75, 28)
                     appr.clicked.connect(lambda _, did=dev["id"]: self._approve(did))
                     btn_l.addWidget(appr)
+                    
+                    rej = QPushButton("Reject")
+                    rej.setObjectName("btn-danger")
+                    rej.setStyleSheet("QPushButton{background:#fee2e2;color:#ef4444;border:1px solid #fecaca;border-radius:6px;padding:5px 12px;font-size:13px} QPushButton:hover{background:#fecaca}")
+                    rej.setFixedSize(75, 28)
+                    rej.clicked.connect(lambda _, did=dev["id"]: self._remove(did))
+                    btn_l.addWidget(rej)
                 else:
                     if not dev.get("is_shared"):
                         share_btn = QPushButton("Share")

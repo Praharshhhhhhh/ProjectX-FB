@@ -33,7 +33,8 @@ class TunnelManager:
                 existing_priv, _ = wg.get_or_create_keypair()
                 conf_data = conf_data.replace("REPLACE_ME", existing_priv)
                 
-            config_path = os.path.join(WG_CONFIG_DIR, f"projectx_{self.device_id}.conf")
+            from config import WG_INTERFACE
+            config_path = os.path.join(WG_CONFIG_DIR, f"{WG_INTERFACE}.conf")
             # Write config file
             try:
                 os.makedirs(WG_CONFIG_DIR, exist_ok=True)
@@ -50,7 +51,8 @@ class TunnelManager:
 
     def disconnect(self) -> bool:
         if self.tunnel_type == "wireguard":
-            config_path = os.path.join(WG_CONFIG_DIR, f"projectx_{self.device_id}.conf")
+            from config import WG_INTERFACE
+            config_path = os.path.join(WG_CONFIG_DIR, f"{WG_INTERFACE}.conf")
             return wg.disconnect(config_path)
         else:
             if not self.network_id:
@@ -59,7 +61,8 @@ class TunnelManager:
 
     def get_status(self) -> str:
         if self.tunnel_type == "wireguard":
-            config_path = os.path.join(WG_CONFIG_DIR, f"projectx_{self.device_id}.conf")
+            from config import WG_INTERFACE
+            config_path = os.path.join(WG_CONFIG_DIR, f"{WG_INTERFACE}.conf")
             return wg.get_status(config_path)
         else:
             if not self.network_id:
