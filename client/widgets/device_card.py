@@ -41,6 +41,46 @@ class ConnectWorker(QThread):
         except Exception:
             pass
 
+class RenameDeviceDialog(QDialog):
+    def __init__(self, current_name, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Rename Device")
+        self.setFixedSize(350, 160)
+        self.setStyleSheet("QDialog{background:#f1f5f9} QLabel{background:transparent;color:#0f172a} QLineEdit{background:#ffffff;border:1px solid #cbd5e1;border-radius:6px;padding:8px;font-size:13px;color:#0f172a}")
+        self._build_ui(current_name)
+
+    def _build_ui(self, current_name):
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(24, 24, 24, 24)
+        lay.setSpacing(16)
+        
+        lbl = QLabel("<b>Enter new device name:</b>")
+        lbl.setStyleSheet("font-size:14px;")
+        lay.addWidget(lbl)
+        
+        self.inp = QLineEdit(current_name)
+        lay.addWidget(self.inp)
+        
+        btn_lay = QHBoxLayout()
+        btn_lay.addStretch()
+        
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        cancel_btn.setStyleSheet("QPushButton{background:white;color:#0f172a;border:1px solid #e2e8f0;border-radius:6px;padding:6px 16px;font-size:13px} QPushButton:hover{background:#f8fafc}")
+        cancel_btn.clicked.connect(self.reject)
+        btn_lay.addWidget(cancel_btn)
+        
+        save_btn = QPushButton("Save")
+        save_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        save_btn.setStyleSheet("QPushButton{background:#2563eb;color:white;border:none;border-radius:6px;padding:6px 16px;font-weight:bold;font-size:13px} QPushButton:hover{background:#1d4ed8;}")
+        save_btn.clicked.connect(self.accept)
+        btn_lay.addWidget(save_btn)
+        
+        lay.addLayout(btn_lay)
+
+    def get_name(self):
+        return self.inp.text()
+
 class ShareDeviceDialog(QDialog):
     def __init__(self, device: dict, api, parent=None):
         super().__init__(parent)
@@ -668,16 +708,16 @@ class DeviceCard(QFrame):
         dlg.exec()
 
     def _rename_device(self):
-        from PyQt6.QtWidgets import QInputDialog
-        new_name, ok = QInputDialog.getText(self, "Rename Device", "Enter new name:", text=self.device.get("name", ""))
-        if ok and new_name.strip():
-            # Fire and forget rename via API
-            try:
-                import threading
-                threading.Thread(target=self.api.rename_device, args=(self.device["id"], new_name.strip()), daemon=True).start()
-                self.name_label.setText(new_name.strip())
-            except Exception:
-                pass
+        dlg = RenameDeviceDialog(self.device.get("name", ""), self.window())
+        if dlg.exec():
+            new_name = dlg.get_name().strip()
+            if new_name:
+                try:
+                    import threading
+                    threading.Thread(target=self.api.rename_device, args=(self.device["id"], new_name), daemon=True).start()
+                    self.name_label.setText(new_name)
+                except Exception:
+                    pass
 
     def _open_lan_ip(self):
         lan = self.device.get("lan_ip")

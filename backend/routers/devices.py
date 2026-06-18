@@ -325,7 +325,7 @@ async def device_heartbeat(req: DeviceRegister, db: Annotated[Session, Depends(g
 
 @router.get("/wg-tunnel-peers")
 async def get_wg_tunnel_peers(
-    current_user: Annotated[User, Depends(require_master_or_above)],
+    current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[Session, Depends(get_db)]
 ):
     # pyrefly: ignore [missing-import]
@@ -339,6 +339,9 @@ async def get_wg_tunnel_peers(
         Device.tunnel_type == "wireguard",
         Device.is_approved == True
     ).all()
+    
+    # Filter devices based on what the user can see
+    wg_devices = [d for d in wg_devices if _user_can_see(current_user, d, db)]
     
     statuses = await wireguard_controller.get_all_peer_statuses(interface=tenant.wg_server_interface)
     

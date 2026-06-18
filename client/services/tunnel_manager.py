@@ -18,7 +18,7 @@ class TunnelManager:
             existing_priv, existing_pub = wg.get_or_create_keypair()
             return device.get("wg_public_key") == existing_pub
         else:
-            if not zt.is_running(): return False
+            if not zt.is_zerotier_running(): return False
             node_id = zt.get_node_info().get("address")
             return device.get("zerotier_node_id") == node_id
 

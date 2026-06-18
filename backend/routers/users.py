@@ -102,7 +102,19 @@ def remove_user(user_id: int, current_user: Annotated[User, Depends(require_mast
 
 
 @router.patch("/{user_id}")
-def update_user(user_id: int, req: UserUpdate, current_user: Annotated[User, Depends(require_master_or_above)], db: Annotated[Session, Depends(get_db)]):
+def update_user(user_id: int, req: UserUpdate, current_user: Annotated[User, Depends(get_current_user)], db: Annotated[Session, Depends(get_db)]):
+    is_master_or_above = current_user.role in (UserRole.system_owner, UserRole.master, UserRole.second_master)
+    
+    if not is_master_or_above:
+        if current_user.id != user_id:
+            raise HTTPException(status_code=403, detail="Insufficient permissions")
+        if current_user.role != UserRole.admin and not current_user.is_trusted:
+            raise HTTPException(status_code=403, detail="Insufficient permissions to update profile")
+        if req.email is not None and req.email != current_user.email:
+            raise HTTPException(status_code=403, detail="Cannot change email address")
+        if req.is_active is not None and req.is_active != current_user.is_active:
+            raise HTTPException(status_code=403, detail="Cannot change active status")
+
     if current_user.role == UserRole.system_owner:
         user = db.query(User).filter(User.id == user_id).first()
     else:
