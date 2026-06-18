@@ -67,6 +67,10 @@ PersistentKeepalive = 25
 """
     try:
         os.makedirs(os.path.dirname(config_path), exist_ok=True)
+        if os.path.exists(config_path):
+            with open(config_path, "r") as f:
+                if f.read() == config:
+                    return False
         with open(config_path, "w") as f:
             f.write(config)
         return True

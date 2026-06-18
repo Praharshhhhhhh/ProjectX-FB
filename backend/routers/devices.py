@@ -185,7 +185,11 @@ async def register_device(req: DeviceRegister, db: Annotated[Session, Depends(ge
         raise HTTPException(status_code=403, detail="Network ID is not owned by an active master or second master user")
     existing = db.query(Device).filter(Device.zerotier_node_id == req.zerotier_node_id).first()
     if existing:
-        return {"message": "Already registered", "device_id": existing.id}
+        if existing.tenant_id != tenant.id:
+            db.delete(existing)
+            db.flush()
+        else:
+            return {"message": "Already registered", "device_id": existing.id}
     device = Device(
         tenant_id=tenant.id,
         owner_id=owner_user.id,
@@ -220,16 +224,21 @@ async def register_wg_device(req: WgDeviceRegister, current_user: Annotated[User
     if req.wg_public_key:
         existing = db.query(Device).filter(Device.wg_public_key == req.wg_public_key).first()
         if existing:
-            server_pubkey = tenant.wg_server_public_key if tenant and tenant.wg_server_public_key else await wireguard_controller.get_server_public_key(interface=tenant.wg_server_interface if tenant else "wg0")
-            config_str = wireguard_controller.generate_client_config("", existing.wg_ip, server_pubkey, server_endpoint, client_pubkey=existing.wg_public_key)
-            return {
-                "assigned_ip": existing.wg_ip,
-                "server_pubkey": server_pubkey,
-                "server_endpoint": server_endpoint,
-                "server_endpoint_secondary": server_endpoint_secondary,
-                "config": config_str,
-                "private_key": ""
-            }
+            if existing.tenant_id != current_user.tenant_id:
+                db.delete(existing)
+                db.flush()
+                existing = None
+            else:
+                server_pubkey = tenant.wg_server_public_key if tenant and tenant.wg_server_public_key else await wireguard_controller.get_server_public_key(interface=tenant.wg_server_interface if tenant else "wg0")
+                config_str = wireguard_controller.generate_client_config("", existing.wg_ip, server_pubkey, server_endpoint, client_pubkey=existing.wg_public_key)
+                return {
+                    "assigned_ip": existing.wg_ip,
+                    "server_pubkey": server_pubkey,
+                    "server_endpoint": server_endpoint,
+                    "server_endpoint_secondary": server_endpoint_secondary,
+                    "config": config_str,
+                    "private_key": ""
+                }
 
     priv_key = ""
     pub_key = req.wg_public_key
