@@ -229,6 +229,7 @@ class CardWithHeader(QFrame):
         self._layout.setSpacing(0)
 
         header = QFrame()
+        header.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
         header.setStyleSheet(
             "QFrame{background:#f8fafc;border-bottom:1px solid #e2e8f0;"
             "border-top-left-radius:12px;border-top-right-radius:12px;}"

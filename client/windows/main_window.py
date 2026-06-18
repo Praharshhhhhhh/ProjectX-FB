@@ -383,6 +383,7 @@ class DevicesPage(QWidget):
             self._dev_scroll.setWidget(self._dev_container)
             self.card.add_widget(self._dev_scroll)
         self.card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.card._layout.setStretch(1, 1)
         lay.addWidget(self.card)
 
     def _change_network_mode(self, index: int):
