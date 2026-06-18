@@ -16,7 +16,13 @@ class WebSocketWorker(QThread):
     def start(self, *args, **kwargs):
         from widgets.common import _active_workers
         _active_workers.add(self)
+        self.finished.connect(self._cleanup)
         super().start(*args, **kwargs)
+
+    def _cleanup(self):
+        from widgets.common import _active_workers
+        _active_workers.discard(self)
+        self.deleteLater()
 
     def run(self):
         try:
@@ -32,9 +38,8 @@ class WebSocketWorker(QThread):
                 if self._running:
                     # Reconnect backoff
                     time.sleep(3)
-        finally:
-            from widgets.common import _active_workers
-            _active_workers.discard(self)
+        except Exception:
+            pass
 
     def _on_message(self, ws, message):
         try:

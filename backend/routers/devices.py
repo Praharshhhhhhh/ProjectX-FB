@@ -86,6 +86,14 @@ async def _handle_subnet_overlap(device: Device, db: Session):
                 device.nat_virtual_pool = virtual_pool
                 db.commit()
                 logger.info(f"Assigned Edge NAT virtual pool {virtual_pool} to device {device.id} to resolve collision.")
+                
+                tenant = db.query(Tenant).filter(Tenant.id == device.tenant_id).first()
+                if tenant and device.wg_public_key and device.wg_ip:
+                    await wireguard_controller.add_peer(
+                        public_key=device.wg_public_key,
+                        allowed_ip=device.wg_ip,
+                        interface=tenant.wg_server_interface if tenant.wg_server_interface else "wg0"
+                    )
         else:
             overlap_ids = [o.id for o in overlaps]
             logger.warning(
@@ -221,7 +229,7 @@ async def register_wg_device(req: WgDeviceRegister, current_user: Annotated[User
         existing = db.query(Device).filter(Device.wg_public_key == req.wg_public_key).first()
         if existing:
             server_pubkey = tenant.wg_server_public_key if tenant and tenant.wg_server_public_key else await wireguard_controller.get_server_public_key(interface=tenant.wg_server_interface if tenant else "wg0")
-            config_str = wireguard_controller.generate_client_config("", existing.wg_ip, server_pubkey, server_endpoint)
+            config_str = wireguard_controller.generate_client_config("", existing.wg_ip, server_pubkey, server_endpoint, client_pubkey=existing.wg_public_key)
             return {
                 "assigned_ip": existing.wg_ip,
                 "server_pubkey": server_pubkey,
@@ -242,7 +250,7 @@ async def register_wg_device(req: WgDeviceRegister, current_user: Annotated[User
     assigned_ip = wireguard_controller.assign_ip_from_pool(db, current_user.tenant_id)
     server_pubkey = await wireguard_controller.get_server_public_key(interface=tenant.wg_server_interface if tenant else "wg0")
     
-    config_str = wireguard_controller.generate_client_config(priv_key, assigned_ip, server_pubkey, server_endpoint)
+    config_str = wireguard_controller.generate_client_config(priv_key, assigned_ip, server_pubkey, server_endpoint, client_pubkey=pub_key)
     
     device = Device(
         tenant_id=current_user.tenant_id,
@@ -544,7 +552,8 @@ async def get_device_conf(device_id: int, current_user: Annotated[User, Depends(
         server_pubkey=server_pubkey,
         server_endpoint=server_endpoint,
         virtual_pool=device.nat_virtual_pool,
-        real_subnet=device.lan_subnet
+        real_subnet=device.lan_subnet,
+        client_pubkey=device.wg_public_key
     )
     return Response(content=conf, media_type="text/plain",
         headers={"Content-Disposition": f'attachment; filename="{device.name}.conf"'})

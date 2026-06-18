@@ -98,7 +98,12 @@ class Worker(QThread):
 
     def start(self, *args, **kwargs):
         _active_workers.add(self)
+        self.finished.connect(self._cleanup)
         super().start(*args, **kwargs)
+
+    def _cleanup(self):
+        _active_workers.discard(self)
+        self.deleteLater()
 
     def run(self):
         try:
@@ -113,8 +118,6 @@ class Worker(QThread):
             self.error.emit(str(msg))
         except Exception as e:
             self.error.emit(str(e))
-        finally:
-            _active_workers.discard(self)
 
 
 # ── Stat card ────────────────────────────────────────────────────────────────

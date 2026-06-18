@@ -24,6 +24,8 @@ class Settings(BaseSettings):
     WG_SERVER_ENDPOINT: str = "127.0.0.1:51820"
     WG_SERVER_ENDPOINT_SECONDARY: str = ""
 
+    BACKEND_URL: str = "http://localhost:8000"
+
     APP_NAME: str = "ProjectX"
     APP_VERSION: str = "1.0.0"
 

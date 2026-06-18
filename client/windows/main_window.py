@@ -382,8 +382,13 @@ class DevicesPage(QWidget):
             self._dev_layout.addStretch()
             self._dev_scroll.setWidget(self._dev_container)
             self.card.add_widget(self._dev_scroll)
+        self.card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.card._layout.setAlignment(Qt.AlignmentFlag(0))
+        header_widget = self.card._layout.itemAt(0).widget()
+        if header_widget:
+            header_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
+        self.card._layout.setStretch(1, 1)
         lay.addWidget(self.card)
-        lay.addStretch()
 
     def _change_network_mode(self, index: int):
         is_layer2 = (index == 1)
@@ -397,8 +402,12 @@ class DevicesPage(QWidget):
                 break
 
     def refresh(self):
-        if hasattr(self, "_w") and self._w.isRunning():
-            return  # Wait for current refresh to finish
+        if hasattr(self, "_w"):
+            try:
+                if self._w.isRunning():
+                    return  # Wait for current refresh to finish
+            except RuntimeError:
+                pass
         
         role = self.user.get("role", "")
         is_master = role in ("master", "second_master")
@@ -1936,8 +1945,12 @@ class WgTunnelPage(QWidget):
             QMessageBox.critical(self, "Error", f"Failed to disconnect: {e}")
 
     def refresh(self):
-        if hasattr(self, "_w") and self._w.isRunning():
-            return
+        if hasattr(self, "_w"):
+            try:
+                if self._w.isRunning():
+                    return
+            except RuntimeError:
+                pass
         self.refresh_btn.setText("Refreshing...")
         self.refresh_btn.setEnabled(False)
         self._w = Worker(self.api.get_wg_tunnel_peers)

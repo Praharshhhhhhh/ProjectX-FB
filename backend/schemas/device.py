@@ -35,6 +35,7 @@ class DeviceOut(BaseModel):
     tunnel_type: str = "zerotier"
     lan_ip: Optional[str]
     lan_subnet: Optional[str]
+    nat_virtual_pool: Optional[str] = None
     network_id: Optional[str]
     status: str
     is_approved: bool

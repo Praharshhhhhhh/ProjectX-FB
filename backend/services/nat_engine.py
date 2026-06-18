@@ -49,8 +49,8 @@ async def write_iptables_nat_rule(device_id: int, virtual_pool: str, real_subnet
         p1 = await asyncio.create_subprocess_exec(
             "iptables", "-t", "nat", "-A", "PREROUTING",
             "-d", f"{virtual_pool}.0/24",
-            "-j", "DNAT",
-            "--to-destination", gateway_ip or f"{real_subnet}.1",
+            "-j", "NETMAP",
+            "--to", f"{real_subnet}.0/24",
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
         )
         _, err1 = await p1.communicate()
@@ -59,7 +59,7 @@ async def write_iptables_nat_rule(device_id: int, virtual_pool: str, real_subnet
             return False
 
         p2 = await asyncio.create_subprocess_exec(
-            "iptables", "-t", "nat", "-A", "POSTROUTING", "-s", f"{real_subnet}.0/24", "-j", "SNAT", "--to-source", f"{virtual_pool}.1",
+            "iptables", "-t", "nat", "-A", "POSTROUTING", "-s", f"{real_subnet}.0/24", "-j", "NETMAP", "--to", f"{virtual_pool}.0/24",
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
         )
         _, err2 = await p2.communicate()
@@ -92,15 +92,14 @@ async def remove_iptables_nat_rule(device_id: int) -> bool:
         return True
 
     try:
-        gateway_ip = rule.get("gateway_ip", f"{real_subnet}.1")
         p1 = await asyncio.create_subprocess_exec(
-            "iptables", "-t", "nat", "-D", "PREROUTING", "-d", f"{virtual_pool}.0/24", "-j", "DNAT", "--to-destination", gateway_ip,
+            "iptables", "-t", "nat", "-D", "PREROUTING", "-d", f"{virtual_pool}.0/24", "-j", "NETMAP", "--to", f"{real_subnet}.0/24",
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
         )
         await p1.communicate()
 
         p2 = await asyncio.create_subprocess_exec(
-            "iptables", "-t", "nat", "-D", "POSTROUTING", "-s", f"{real_subnet}.0/24", "-j", "SNAT", "--to-source", f"{virtual_pool}.1",
+            "iptables", "-t", "nat", "-D", "POSTROUTING", "-s", f"{real_subnet}.0/24", "-j", "NETMAP", "--to", f"{virtual_pool}.0/24",
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
         )
         await p2.communicate()

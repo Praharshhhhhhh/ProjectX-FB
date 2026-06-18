@@ -256,13 +256,23 @@ class App:
                                             tunnel.connect(WG_INTERFACE)
     
                                 if tun_status == "connected":
+                                    import ipaddress
+                                    lan_subnet = None
+                                    if lan_ip:
+                                        try:
+                                            lan_subnet = str(ipaddress.ip_network(f"{lan_ip}/24", strict=False))
+                                        except Exception:
+                                            pass
+                                    
                                     api.send_heartbeat(
                                         node_id=node_id,
                                         network_id=network_id,
                                         zt_ip=tun_ip,
                                         lan_ip=lan_ip,
-                                        hostname=socket.gethostname()
+                                        hostname=socket.gethostname(),
+                                        lan_subnet=lan_subnet
                                     )
+                                
                             except Exception:
                                 pass
                             time.sleep(5)

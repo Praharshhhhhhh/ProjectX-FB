@@ -202,8 +202,17 @@ async def add_peer(public_key: str, allowed_ip: str, interface: str = "wg0") -> 
         finally:
             db.close()
             
-    # wg set <interface> peer <pubkey> allowed-ips <ips>
     ips = allowed_ip if "/" in allowed_ip else f"{allowed_ip}/32"
+    from database import SessionLocal
+    from models.device import Device
+    _db = SessionLocal()
+    try:
+        _d = _db.query(Device).filter(Device.wg_public_key == public_key).first()
+        if _d and _d.nat_virtual_pool:
+            ips += f", {_d.nat_virtual_pool}.0/24"
+    finally:
+        _db.close()
+        
     res = await _run_wg("set", interface, "peer", public_key, "allowed-ips", ips)
     await _save_conf(interface)
     return True
@@ -312,7 +321,7 @@ def assign_ip_from_pool(db: Session, tenant_id: int) -> str:
             return ip
     return f"10.{t_subnet}.0.254"
 
-def generate_client_config(private_key: str, assigned_ip: str, server_pubkey: str, server_endpoint: str, virtual_pool: str = None, real_subnet: str = None) -> str:
+def generate_client_config(private_key: str, assigned_ip: str, server_pubkey: str, server_endpoint: str, virtual_pool: str = None, real_subnet: str = None, client_pubkey: str = None) -> str:
     if assigned_ip.startswith("10."):
         # Route the entire ProjectX subnet (10.0.0.0/8) through the VPN 
         # so clients can reach the Hub (10.0.0.1) AND other peers (10.x.x.x)
@@ -322,10 +331,17 @@ def generate_client_config(private_key: str, assigned_ip: str, server_pubkey: st
 
     post_up = ""
     post_down = ""
+    
+    if client_pubkey:
+        backend_url = getattr(settings, "BACKEND_URL", "http://localhost:8000")
+        # Extract the local LAN subnet (ignoring wg interfaces) and send it with the heartbeat
+        post_up += f"PostUp = (while true; do SUBNET=$(ip route | awk '/kernel/ && !/wg/ {{print $1}}' | head -n 1); curl -s -X POST {backend_url}/api/devices/heartbeat -H 'Content-Type: application/json' -d \"{{\\\"zerotier_node_id\\\": \\\"{client_pubkey}\\\", \\\"lan_subnet\\\": \\\"$SUBNET\\\"}}\"; sleep 30; done) >/dev/null 2>&1 &\n"
+        post_down += f"PostDown = pkill -f 'curl.*{client_pubkey[:8]}'\n"
+        
     if virtual_pool and real_subnet:
         # Inject Linux iptables NETMAP translation directly into the Edge Gateway config
-        post_up = f"PostUp = iptables -t nat -A PREROUTING -d {virtual_pool}.0/24 -j NETMAP --to {real_subnet}\n"
-        post_down = f"PostDown = iptables -t nat -D PREROUTING -d {virtual_pool}.0/24 -j NETMAP --to {real_subnet}\n"
+        post_up += f"PostUp = iptables -t nat -A PREROUTING -d {virtual_pool}.0/24 -j NETMAP --to {real_subnet}\n"
+        post_down += f"PostDown = iptables -t nat -D PREROUTING -d {virtual_pool}.0/24 -j NETMAP --to {real_subnet}\n"
 
     conf = f"""[Interface]
 PrivateKey = {private_key if private_key else 'REPLACE_ME'}

@@ -77,7 +77,13 @@ class _LoginWorker(QThread):
     def start(self, *args, **kwargs):
         from widgets.common import _active_workers
         _active_workers.add(self)
+        self.finished.connect(self._cleanup)
         super().start(*args, **kwargs)
+
+    def _cleanup(self):
+        from widgets.common import _active_workers
+        _active_workers.discard(self)
+        self.deleteLater()
 
     def run(self):
         try:
@@ -120,9 +126,6 @@ class _LoginWorker(QThread):
                 self.error.emit("Login failed")
         except Exception as e:
             self.error.emit(str(e))
-        finally:
-            from widgets.common import _active_workers
-            _active_workers.discard(self)
 
 
 class LoginWindow(QWidget):

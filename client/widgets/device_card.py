@@ -20,7 +20,13 @@ class ConnectWorker(QThread):
     def start(self, *args, **kwargs):
         from widgets.common import _active_workers
         _active_workers.add(self)
+        self.finished.connect(self._cleanup)
         super().start(*args, **kwargs)
+
+    def _cleanup(self):
+        from widgets.common import _active_workers
+        _active_workers.discard(self)
+        self.deleteLater()
 
     def run(self):
         try:
@@ -32,9 +38,8 @@ class ConnectWorker(QThread):
             else:
                 ok = manager.disconnect()
                 self.done.emit(ok, "disconnected")
-        finally:
-            from widgets.common import _active_workers
-            _active_workers.discard(self)
+        except Exception:
+            pass
 
 class ShareDeviceDialog(QDialog):
     def __init__(self, device: dict, api, parent=None):
@@ -203,7 +208,13 @@ class ScanWorker(QThread):
     def start(self, *args, **kwargs):
         from widgets.common import _active_workers
         _active_workers.add(self)
+        self.finished.connect(self._cleanup)
         super().start(*args, **kwargs)
+
+    def _cleanup(self):
+        from widgets.common import _active_workers
+        _active_workers.discard(self)
+        self.deleteLater()
 
     def run(self):
         try:
@@ -263,9 +274,6 @@ class ScanWorker(QThread):
             self.done.emit(devices)
         except Exception as e:
             self.error.emit(str(e))
-        finally:
-            from widgets.common import _active_workers
-            _active_workers.discard(self)
 
 
 class DeviceCard(QFrame):
@@ -741,7 +749,13 @@ class DeviceCard(QFrame):
             self.lan_btn.setCursor(Qt.CursorShape.ArrowCursor)
             if hasattr(self, 'router_btn'): self.router_btn.setVisible(False)
             
-        self.zt_label.setText(f"  ·  {prefix}: {tun_ip}")
+        nat_pool = self.device.get("nat_virtual_pool")
+        if nat_pool:
+            self.zt_label.setText(f"  ·  {prefix}: {tun_ip}  ·  NAT Pool: {nat_pool}.0/24")
+            self.zt_label.setStyleSheet("font-size:11px;color:#ef4444;background:transparent;border:none;font-weight:bold;")
+        else:
+            self.zt_label.setText(f"  ·  {prefix}: {tun_ip}")
+            self.zt_label.setStyleSheet("font-size:11px;color:#94a3b8;background:transparent;border:none;")
 
     def update_data(self, device: dict):
         self.device = device

@@ -90,7 +90,8 @@ async def _provision_wireguard(device: Device, db: Session) -> ProvisionResult:
             private_key=priv_key,
             assigned_ip=wg_ip,
             server_pubkey=server_pubkey,
-            server_endpoint=server_endpoint
+            server_endpoint=server_endpoint,
+            client_pubkey=pub_key
         )
         
         return ProvisionResult(

@@ -19,7 +19,7 @@ python-multipart==0.0.9
 apscheduler==3.10.4
 websockets==12.0
 psycopg2-binary==2.9.9          # PostgreSQL driver (remove if using SQLite only)
-
+sqlcipher3>=0.6.2               # SQLCipher driver for encrypted SQLite
 # ── Desktop client (PyQt6 GUI) ──
 PyQt6==6.7.0
 Pillow==10.3.0
