@@ -226,7 +226,7 @@ class CardWithHeader(QFrame):
         self._layout = QVBoxLayout(self)
         self._layout.setContentsMargins(0, 0, 16, 0)
         self._layout.setSpacing(0)
-        self._layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        self._layout.setSpacing(0)
 
         header = QFrame()
         header.setStyleSheet(
