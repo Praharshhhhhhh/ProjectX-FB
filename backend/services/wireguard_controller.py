@@ -202,17 +202,8 @@ async def add_peer(public_key: str, allowed_ip: str, interface: str = "wg0") -> 
         finally:
             db.close()
             
+    # wg set <interface> peer <pubkey> allowed-ips <ips>
     ips = allowed_ip if "/" in allowed_ip else f"{allowed_ip}/32"
-    from database import SessionLocal
-    from models.device import Device
-    _db = SessionLocal()
-    try:
-        _d = _db.query(Device).filter(Device.wg_public_key == public_key).first()
-        if _d and _d.nat_virtual_pool:
-            ips += f", {_d.nat_virtual_pool}.0/24"
-    finally:
-        _db.close()
-        
     res = await _run_wg("set", interface, "peer", public_key, "allowed-ips", ips)
     await _save_conf(interface)
     return True

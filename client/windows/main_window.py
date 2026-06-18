@@ -339,7 +339,6 @@ class DevicesPage(QWidget):
         # Auto-reconnect banner
         banner = QLabel("↻  Auto-reconnect enabled — connections restore automatically if your network changes")
         banner.setStyleSheet("background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe;border-radius:8px;padding:10px 14px;font-size:13px")
-        banner.setFixedHeight(36)
         lay.addWidget(banner)
         
         if is_master:
@@ -354,8 +353,7 @@ class DevicesPage(QWidget):
             lay.addLayout(mode_lay)
 
         self.card = CardWithHeader("Active Devices")
-        self.card.layout().setSpacing(0)
-        self.card.layout().setContentsMargins(0, 0, 0, 0)
+        self.card.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
         if is_master:
             headers = ["Device Name", "LAN IP", "Tunnel IP", "Network", "Status", "Actions"]
             self._tbl = make_table(headers)
@@ -364,7 +362,8 @@ class DevicesPage(QWidget):
             hh = self._tbl.horizontalHeader()
             for col in range(6):
                 hh.setSectionResizeMode(col, QHeaderView.ResizeMode.Fixed)
-            self._tbl.setColumnWidth(0, 220)
+            hh.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+            self._tbl.setColumnWidth(0, 200)
             self._tbl.setColumnWidth(1, 130)
             self._tbl.setColumnWidth(2, 200)
             self._tbl.setColumnWidth(3, 160)
@@ -375,7 +374,7 @@ class DevicesPage(QWidget):
             self._dev_scroll = QScrollArea()
             self._dev_scroll.setWidgetResizable(True)
             self._dev_scroll.setFrameShape(QFrame.Shape.NoFrame)
-            self._dev_scroll.setMinimumHeight(200)
+            self._dev_scroll.setMinimumHeight(450)
             self._dev_scroll.setStyleSheet("background:transparent;border:none")
             self._dev_container = QWidget()
             self._dev_container.setStyleSheet("background:transparent")
@@ -385,9 +384,8 @@ class DevicesPage(QWidget):
             self._dev_layout.addStretch()
             self._dev_scroll.setWidget(self._dev_container)
             self.card.add_widget(self._dev_scroll)
-        self.card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        self.card._layout.setStretch(1, 1)
-        lay.addWidget(self.card)
+        lay.addWidget(self.card,1)
+        lay.addStretch()
 
     def _change_network_mode(self, index: int):
         is_layer2 = (index == 1)

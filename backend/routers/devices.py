@@ -86,14 +86,6 @@ async def _handle_subnet_overlap(device: Device, db: Session):
                 device.nat_virtual_pool = virtual_pool
                 db.commit()
                 logger.info(f"Assigned Edge NAT virtual pool {virtual_pool} to device {device.id} to resolve collision.")
-                
-                tenant = db.query(Tenant).filter(Tenant.id == device.tenant_id).first()
-                if tenant and device.wg_public_key and device.wg_ip:
-                    await wireguard_controller.add_peer(
-                        public_key=device.wg_public_key,
-                        allowed_ip=device.wg_ip,
-                        interface=tenant.wg_server_interface if tenant.wg_server_interface else "wg0"
-                    )
         else:
             overlap_ids = [o.id for o in overlaps]
             logger.warning(
