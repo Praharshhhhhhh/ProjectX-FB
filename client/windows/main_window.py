@@ -354,6 +354,8 @@ class DevicesPage(QWidget):
             lay.addLayout(mode_lay)
 
         self.card = CardWithHeader("Active Devices")
+        self.card.layout().setSpacing(0)
+        self.card.layout().setContentsMargins(0, 0, 0, 0)
         if is_master:
             headers = ["Device Name", "LAN IP", "Tunnel IP", "Network", "Status", "Actions"]
             self._tbl = make_table(headers)
@@ -368,7 +370,6 @@ class DevicesPage(QWidget):
             self._tbl.setColumnWidth(3, 160)
             self._tbl.setColumnWidth(4, 90)
             self._tbl.setColumnWidth(5, 300)
-            self._tbl.setContentsMargins(0, 0, 0, 0)
             self.card.add_widget(self._tbl)
         else:
             self._dev_scroll = QScrollArea()
