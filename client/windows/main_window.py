@@ -339,6 +339,7 @@ class DevicesPage(QWidget):
         # Auto-reconnect banner
         banner = QLabel("↻  Auto-reconnect enabled — connections restore automatically if your network changes")
         banner.setStyleSheet("background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe;border-radius:8px;padding:10px 14px;font-size:13px")
+        banner.setFixedHeight(36)
         lay.addWidget(banner)
         
         if is_master:
@@ -361,12 +362,13 @@ class DevicesPage(QWidget):
             hh = self._tbl.horizontalHeader()
             for col in range(6):
                 hh.setSectionResizeMode(col, QHeaderView.ResizeMode.Fixed)
-            self._tbl.setColumnWidth(0, 170)
+            self._tbl.setColumnWidth(0, 220)
             self._tbl.setColumnWidth(1, 130)
             self._tbl.setColumnWidth(2, 200)
             self._tbl.setColumnWidth(3, 160)
             self._tbl.setColumnWidth(4, 90)
             self._tbl.setColumnWidth(5, 300)
+            self._tbl.setContentsMargins(0, 0, 0, 0)
             self.card.add_widget(self._tbl)
         else:
             self._dev_scroll = QScrollArea()
