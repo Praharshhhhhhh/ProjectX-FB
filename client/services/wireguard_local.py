@@ -82,18 +82,21 @@ def _run_with_elevation_fallback(cmd: list) -> bool:
         creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
         subprocess.run(cmd, capture_output=True, check=True, creationflags=creationflags)
         return True
-    except subprocess.CalledProcessError:
+    except (subprocess.CalledProcessError, OSError):
         if sys.platform == "win32":
             try:
                 exe = cmd[0]
-                args_str = ", ".join(f"'{a}'" for a in cmd[1:])
-                ps_cmd = f"Start-Process -FilePath '{exe}' -ArgumentList {args_str} -Verb RunAs -WindowStyle Hidden -Wait"
+                # Join arguments into a single double-quoted string to avoid PowerShell array parsing bugs
+                args_joined = " ".join(f'"{str(a)}"' for a in cmd[1:])
+                ps_cmd = f"Start-Process -FilePath '{exe}' -ArgumentList '{args_joined}' -Verb RunAs -WindowStyle Hidden -Wait"
                 subprocess.run(["powershell", "-Command", ps_cmd], check=True, creationflags=subprocess.CREATE_NO_WINDOW)
                 return True
-            except Exception:
+            except Exception as e:
+                print("Elevation fallback failed:", e)
                 return False
         return False
-    except Exception:
+    except Exception as e:
+        print("Command failed:", e)
         return False
 
 def connect(config_name_or_path: str) -> bool:
@@ -244,49 +247,27 @@ def sync_hub_peers(interface: str, peers: list) -> bool:
     if sys.platform != "win32":
         return False
         
-    conf_path = f"C:\\Program Files\\WireGuard\\{interface}.conf"
-    if not os.path.exists(conf_path):
-        return False
-        
     try:
-        with open(conf_path, "r") as f:
-            lines = f.readlines()
-            
-        interface_lines = []
-        for line in lines:
-            if line.strip() == "[Peer]":
-                break
-            if line.strip():
-                interface_lines.append(line.strip() + "\n")
-            
-        new_conf = "".join(interface_lines)
-        for pub_key, allowed_ip in peers:
-            if "/" in allowed_ip:
-                ips = allowed_ip
-            else:
-                ips = f"{allowed_ip}/32"
-            new_conf += f"\n[Peer]\nPublicKey = {pub_key}\nAllowedIPs = {ips}\n"
-            
         import tempfile
-        tmp_path = os.path.join(tempfile.gettempdir(), f"{interface}_temp.conf")
-        with open(tmp_path, "w") as f:
-            f.write(new_conf)
-            
-        WIREGUARD_EXE = r"C:\Program Files\WireGuard\wireguard.exe"
-        ps_cmd = (
-            f"Copy-Item -Path '{tmp_path}' -Destination '{conf_path}' -Force\n"
-            f"Start-Process -FilePath '{WIREGUARD_EXE}' -ArgumentList '/uninstalltunnelservice {interface}' -Wait\n"
-            f"Start-Sleep -Seconds 3\n"
-            f"Start-Process -FilePath '{WIREGUARD_EXE}' -ArgumentList '/installtunnelservice {conf_path}' -Wait\n"
-            f"Start-Sleep -Seconds 1\n"
-            f"Set-NetIPInterface -InterfaceAlias {interface} -Forwarding Enabled -WeakHostSend Enabled -WeakHostReceive Enabled\n"
-        )
+        import subprocess
+        import os
         
-        script_path = os.path.join(tempfile.gettempdir(), "wg_sync.ps1")
+        WG_CMD = r"C:\Program Files\WireGuard\wg.exe"
+        ps_lines = []
+        
+        for pub_key, allowed_ip in peers:
+            ips = allowed_ip if "/" in allowed_ip else f"{allowed_ip}/32"
+            ps_lines.append(f"& '{WG_CMD}' set {interface} peer '{pub_key}' allowed-ips {ips}")
+            
+        ps_lines.append(f"Set-NetIPInterface -InterfaceAlias {interface} -Forwarding Enabled -WeakHostSend Enabled -WeakHostReceive Enabled")
+        
+        ps_cmd = "\n".join(ps_lines)
+        
+        script_path = os.path.join(tempfile.gettempdir(), "wg_sync_peers.ps1")
         with open(script_path, "w") as f:
             f.write(ps_cmd)
             
-        cmd = ["powershell", "-ExecutionPolicy", "Bypass", "-File", script_path]
+        cmd = ["powershell", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-File", script_path]
         return _run_with_elevation_fallback(cmd)
     except Exception as e:
         print(f"Failed to sync hub peers: {e}")

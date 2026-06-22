@@ -1148,6 +1148,16 @@ class OwnerSettingsPage(QWidget):
         upd_btn.setFixedHeight(38)
         upd_btn.clicked.connect(self._change_password)
         sec_lay.addWidget(upd_btn)
+        
+        sec_lay.addSpacing(16)
+        sec_lay.addWidget(_lbl("Two-Factor Authentication", bold=True, size=15))
+        fa_btn = QPushButton("Reconfigure 2FA")
+        fa_btn.setObjectName("btn-ghost")
+        fa_btn.setStyleSheet("QPushButton{background:white;color:#2563eb;border:1px solid #bfdbfe;border-radius:8px;padding:9px 18px;font-size:14px;font-weight:600} QPushButton:hover{background:#eff6ff}")
+        fa_btn.setFixedHeight(38)
+        fa_btn.clicked.connect(self._reconfigure_2fa)
+        sec_lay.addWidget(fa_btn)
+        
         sec_lay.addStretch()
         grid.addWidget(sec_card)
         lay.addLayout(grid)
@@ -1201,6 +1211,80 @@ class OwnerSettingsPage(QWidget):
         self._pw.result.connect(lambda _: self._alert.show_success("Password changed successfully"))
         self._pw.error.connect(self._alert.show_error)
         self._pw.start()
+
+    def _reconfigure_2fa(self):
+        from PyQt6.QtWidgets import QDialog, QVBoxLayout, QLabel, QLineEdit, QPushButton
+        from PyQt6.QtCore import Qt
+        from PyQt6.QtGui import QImage, QPixmap
+        import base64
+
+        class Setup2FADialog(QDialog):
+            def __init__(self, parent, qr_b64, secret, api):
+                super().__init__(parent)
+                self.api = api
+                self.setWindowTitle("Reconfigure 2FA")
+                self.setFixedSize(380, 480)
+                self.setStyleSheet("QDialog{background:#f1f5f9} QLabel{background:transparent;color:#0f172a} QLineEdit{background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:9px;font-size:14px;color:#0f172a}")
+                
+                lay = QVBoxLayout(self)
+                lay.setContentsMargins(28, 28, 28, 28)
+                lay.setSpacing(14)
+                
+                lbl = QLabel("Scan the QR code with your authenticator app:")
+                lbl.setStyleSheet("font-size:13px;font-weight:600;color:#0f172a")
+                lay.addWidget(lbl)
+                
+                qr_lbl = QLabel()
+                qr_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                qr_lbl.setStyleSheet("background:white; border-radius:8px; padding:10px;")
+                img_data = base64.b64decode(qr_b64)
+                img = QImage.fromData(img_data)
+                pix = QPixmap.fromImage(img).scaled(200, 200, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+                qr_lbl.setPixmap(pix)
+                lay.addWidget(qr_lbl)
+                
+                sec_lbl = QLabel(f"Manual Entry: {secret}")
+                sec_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                sec_lbl.setStyleSheet("font-size:12px;color:#64748b;font-family:monospace")
+                lay.addWidget(sec_lbl)
+                
+                lay.addWidget(QLabel("Enter 6-digit code:"))
+                self.code_in = QLineEdit()
+                self.code_in.setPlaceholderText("123456")
+                self.code_in.setMaxLength(6)
+                lay.addWidget(self.code_in)
+                
+                self.err_lbl = QLabel("")
+                self.err_lbl.setStyleSheet("color:#dc2626;font-size:12px;")
+                self.err_lbl.hide()
+                lay.addWidget(self.err_lbl)
+                
+                btn = QPushButton("Verify & Save")
+                btn.setStyleSheet("QPushButton{background:#2563eb;color:white;border:none;border-radius:8px;padding:9px 18px;font-size:14px;font-weight:600} QPushButton:hover{background:#1d4ed8}")
+                btn.clicked.connect(self._verify)
+                lay.addWidget(btn)
+                
+            def _verify(self):
+                code = self.code_in.text().strip()
+                if len(code) != 6:
+                    self.err_lbl.setText("Enter a 6-digit code.")
+                    self.err_lbl.show()
+                    return
+                try:
+                    self.api.verify_2fa(code)
+                    self.accept()
+                except Exception as e:
+                    self.err_lbl.setText(str(e))
+                    self.err_lbl.show()
+
+        self._tw = Worker(self.api.setup_2fa)
+        def on_setup(data):
+            dlg = Setup2FADialog(self.window(), data["qr_code"], data["secret"], self.api)
+            if dlg.exec():
+                self._alert.show_success("2FA reconfigured successfully!")
+        self._tw.result.connect(on_setup)
+        self._tw.error.connect(self._alert.show_error)
+        self._tw.start()
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

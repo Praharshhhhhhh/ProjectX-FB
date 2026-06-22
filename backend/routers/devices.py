@@ -332,6 +332,20 @@ async def device_heartbeat(req: DeviceRegister, db: Annotated[Session, Depends(g
     return {"message": "Heartbeat received", "device_id": device.id}
 
 
+LIVE_WG_STATUSES = {}
+
+class WgStatusesReq(BaseModel):
+    statuses: dict[str, int]
+
+@router.post("/wg-tunnel-statuses")
+async def update_wg_tunnel_statuses(
+    req: WgStatusesReq,
+    current_user: Annotated[User, Depends(get_current_user)]
+):
+    for pubkey, handshake in req.statuses.items():
+        LIVE_WG_STATUSES[pubkey] = handshake
+    return {"message": "Statuses updated"}
+
 @router.get("/wg-tunnel-peers")
 async def get_wg_tunnel_peers(
     current_user: Annotated[User, Depends(get_current_user)],
@@ -352,7 +366,13 @@ async def get_wg_tunnel_peers(
     # Filter devices based on what the user can see
     wg_devices = [d for d in wg_devices if _user_can_see(current_user, d, db)]
     
-    statuses = await wireguard_controller.get_all_peer_statuses(interface=tenant.wg_server_interface)
+    import time
+    statuses = {}
+    for pubkey, handshake in LIVE_WG_STATUSES.items():
+        if handshake > 0 and (time.time() - handshake) < 180:
+            statuses[pubkey] = "active"
+        else:
+            statuses[pubkey] = "offline"
     
     peers = []
     for device in wg_devices:

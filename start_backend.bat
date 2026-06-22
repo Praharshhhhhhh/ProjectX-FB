@@ -8,4 +8,4 @@ if exist "%~dp0venv_312\Scripts\activate.bat" (
 ) else if exist "venv\Scripts\activate.bat" (
     call venv\Scripts\activate.bat
 )
-uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+uvicorn main:app --host 0.0.0.0 --port 8001 --reload

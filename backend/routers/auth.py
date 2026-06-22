@@ -209,6 +209,8 @@ def get_me(current_user: User = Depends(get_current_user), db: Session = Depends
         "tenant_id": current_user.tenant_id,
         "network_id": tenant.zerotier_network_id if tenant else None,
         "has_wg_server": bool(tenant.wg_server_public_key) if tenant else False,
+        "wg_server_public_key": tenant.wg_server_public_key if tenant else None,
+        "wg_server_interface": tenant.wg_server_interface if tenant else None,
         "totp_enabled": current_user.totp_enabled,
         "must_change_password": current_user.must_change_password,
     }

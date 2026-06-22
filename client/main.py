@@ -173,19 +173,54 @@ class App:
         if network_id or (TUNNEL_MODE == "wireguard" and role != "system_owner" and has_wg_server):
             def _check_is_hub():
                 try:
-                    from config import BACKEND_URL
-                    from urllib.parse import urlparse
-                    import socket
-                    host = urlparse(BACKEND_URL).hostname
-                    if host in ("localhost", "127.0.0.1"):
-                        return True
-                    local_ips = [ip[-1][0] for ip in socket.getaddrinfo(socket.gethostname(), None)]
-                    return host in local_ips
+                    server_pub = self._user_info.get("wg_server_public_key")
+                    server_iface = self._user_info.get("wg_server_interface")
+                    if not server_pub or not server_iface:
+                        return False
+                    
+                    import subprocess, sys
+                    WG_CMD = r"C:\Program Files\WireGuard\wg.exe" if sys.platform == "win32" else "wg"
+                    creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+                    local_pub = subprocess.run([WG_CMD, "show", server_iface, "public-key"], capture_output=True, text=True, creationflags=creationflags).stdout.strip()
+                    
+                    return local_pub == server_pub
                 except Exception:
                     return False
             
             is_hub = _check_is_hub()
             
+            if is_hub:
+                import threading
+                import time
+                import subprocess
+                import sys
+
+                def _do_hub_heartbeat():
+                    while True:
+                        try:
+                            server_iface = self._user_info.get("wg_server_interface", "wg0")
+                            WG_CMD = r"C:\Program Files\WireGuard\wg.exe" if sys.platform == "win32" else "wg"
+                            creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+                            
+                            dump = subprocess.run([WG_CMD, "show", server_iface, "dump"], capture_output=True, text=True, creationflags=creationflags).stdout
+                            if dump:
+                                statuses = {}
+                                for line in dump.strip().split("\n"):
+                                    parts = line.split("\t")
+                                    if len(parts) >= 6:
+                                        pubkey = parts[0]
+                                        try:
+                                            latest_handshake = int(parts[4])
+                                            statuses[pubkey] = latest_handshake
+                                        except ValueError:
+                                            pass
+                                api._req("POST", "/api/devices/wg-tunnel-statuses", json={"statuses": statuses})
+                        except Exception as e:
+                            pass
+                        time.sleep(10)
+                
+                threading.Thread(target=_do_hub_heartbeat, daemon=True).start()
+
             if not is_hub:
                 import threading
                 import socket
