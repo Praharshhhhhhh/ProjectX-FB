@@ -74,6 +74,14 @@ class App:
             from services.websocket_client import ws_client
             ws_client.connect_ws(api.base, token_data.get("access_token"))
             
+            try:
+                ws_client.mesh_updated.disconnect(self._on_mesh_updated)
+                ws_client.device_removed.disconnect(self._on_mesh_updated)
+            except TypeError:
+                pass
+            ws_client.mesh_updated.connect(self._on_mesh_updated)
+            ws_client.device_removed.connect(self._on_mesh_updated)
+            
         if token_data.get("requires_2fa") and not me.get("totp_enabled"):
             self._show_2fa_setup()
         else:
@@ -105,6 +113,44 @@ class App:
         self._claim = ClaimNetworkWindow(api)
         self._claim.claim_success.connect(self._show_main)
         self.root.set_view(self._claim)
+
+    def _on_mesh_updated(self, *args):
+        import threading
+        def _sync():
+            try:
+                from services.api_client import api
+                from config import TUNNEL_MODE
+                if TUNNEL_MODE != "wireguard":
+                    return
+                    
+                res = api._req("GET", "/api/devices/wg-tunnel-peers")
+                if not res:
+                    return
+                    
+                server_pubkey = res.get("server_public_key")
+                server_interface = res.get("server_interface")
+                peers = res.get("peers", [])
+                
+                if not server_pubkey or not server_interface:
+                    return
+                
+                import subprocess, sys
+                WG_CMD = r"C:\Program Files\WireGuard\wg.exe" if sys.platform == "win32" else "wg"
+                creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+                
+                local_pub = subprocess.run([WG_CMD, "show", server_interface, "public-key"], capture_output=True, text=True, creationflags=creationflags).stdout.strip()
+                
+                if local_pub == server_pubkey:
+                    peer_list = []
+                    for p in peers:
+                        peer_list.append((p["wg_public_key"], p["wg_ip"] + "/32"))
+                    
+                    from services import wireguard_local
+                    wireguard_local.sync_hub_peers(server_interface, peer_list)
+            except Exception as e:
+                print("Failed to sync hub peers:", e)
+                
+        threading.Thread(target=_sync, daemon=True).start()
 
     # ── Main portal ───────────────────────────────────────────────
     def _show_main(self):

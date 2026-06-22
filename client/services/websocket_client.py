@@ -73,6 +73,7 @@ class WsClient(QObject):
     user_updated = pyqtSignal()
     lan_device_renamed = pyqtSignal(int, int, str)
     alert_received = pyqtSignal(str)
+    mesh_updated = pyqtSignal()
 
     def __init__(self):
         super().__init__()
@@ -115,6 +116,8 @@ class WsClient(QObject):
             )
         elif event == "alert":
             self.alert_received.emit(payload.get("message"))
+        elif event == "mesh_updated":
+            self.mesh_updated.emit()
 
 # Global singleton
 ws_client = WsClient()

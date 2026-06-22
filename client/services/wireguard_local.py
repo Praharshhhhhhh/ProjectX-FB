@@ -239,3 +239,56 @@ def get_device_capability() -> dict:
         pass
         
     return cap
+
+def sync_hub_peers(interface: str, peers: list) -> bool:
+    if sys.platform != "win32":
+        return False
+        
+    conf_path = f"C:\\Program Files\\WireGuard\\{interface}.conf"
+    if not os.path.exists(conf_path):
+        return False
+        
+    try:
+        with open(conf_path, "r") as f:
+            lines = f.readlines()
+            
+        interface_lines = []
+        for line in lines:
+            if line.strip() == "[Peer]":
+                break
+            if line.strip():
+                interface_lines.append(line.strip() + "\n")
+            
+        new_conf = "".join(interface_lines)
+        for pub_key, allowed_ip in peers:
+            if "/" in allowed_ip:
+                ips = allowed_ip
+            else:
+                ips = f"{allowed_ip}/32"
+            new_conf += f"\n[Peer]\nPublicKey = {pub_key}\nAllowedIPs = {ips}\n"
+            
+        import tempfile
+        tmp_path = os.path.join(tempfile.gettempdir(), f"{interface}_temp.conf")
+        with open(tmp_path, "w") as f:
+            f.write(new_conf)
+            
+        WIREGUARD_EXE = r"C:\Program Files\WireGuard\wireguard.exe"
+        ps_cmd = (
+            f"Copy-Item -Path '{tmp_path}' -Destination '{conf_path}' -Force\n"
+            f"Start-Process -FilePath '{WIREGUARD_EXE}' -ArgumentList '/uninstalltunnelservice {interface}' -Wait\n"
+            f"Start-Sleep -Seconds 3\n"
+            f"Start-Process -FilePath '{WIREGUARD_EXE}' -ArgumentList '/installtunnelservice {conf_path}' -Wait\n"
+            f"Start-Sleep -Seconds 1\n"
+            f"Set-NetIPInterface -InterfaceAlias {interface} -Forwarding Enabled -WeakHostSend Enabled -WeakHostReceive Enabled\n"
+        )
+        
+        script_path = os.path.join(tempfile.gettempdir(), "wg_sync.ps1")
+        with open(script_path, "w") as f:
+            f.write(ps_cmd)
+            
+        cmd = ["powershell", "-ExecutionPolicy", "Bypass", "-File", script_path]
+        return _run_with_elevation_fallback(cmd)
+    except Exception as e:
+        print(f"Failed to sync hub peers: {e}")
+        return False
+
