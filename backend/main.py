@@ -82,34 +82,20 @@ def _seed_system_owner():
         db.close()
 
 async def _rebuild_wireguard_peers():
+    # Deprecated: The backend no longer forcefully manages WireGuard interfaces locally.
+    # We broadcast a mesh_updated event to all tenants so connected Hubs reconcile themselves.
     from database import SessionLocal
-    from models.device import Device
-    from services import wireguard_controller
-    import sys
+    from models import Tenant
+    from services.websocket_manager import manager
     
     db = SessionLocal()
     try:
-        devices = db.query(Device).filter(Device.tunnel_type == "wireguard", Device.wg_public_key.isnot(None), Device.wg_ip.isnot(None)).all()
-        
-        if sys.platform == "win32":
-            # Group peers by interface
-            interfaces = {}
-            for device in devices:
-                tenant_interface = device.tenant.wg_server_interface if device.tenant and device.tenant.wg_server_interface else "wg0"
-                if tenant_interface not in interfaces:
-                    interfaces[tenant_interface] = []
-                interfaces[tenant_interface].append((device.wg_public_key, device.wg_ip))
-                
-            for iface, peers in interfaces.items():
-                await wireguard_controller.sync_windows_peers(iface, peers)
-            print(f"✅ Rebuilt {len(devices)} WireGuard peers using native Windows service bounce")
-        else:
-            for device in devices:
-                tenant_interface = device.tenant.wg_server_interface if device.tenant and device.tenant.wg_server_interface else "wg0"
-                await wireguard_controller.add_peer(device.wg_public_key, device.wg_ip, interface=tenant_interface)
-            print(f"✅ Rebuilt {len(devices)} WireGuard peers from DB")
+        tenants = db.query(Tenant).all()
+        for t in tenants:
+            await manager.broadcast_to_tenant(t.id, {"event": "mesh_updated"})
+        print(f"✅ Sent mesh_updated broadcast to {len(tenants)} tenants for Hub reconciliation")
     except Exception as e:
-        print(f"Failed to rebuild WireGuard peers: {e}")
+        print(f"Failed to broadcast mesh_updated: {e}")
     finally:
         db.close()
 

@@ -43,8 +43,7 @@ async def provision_device(device: Device, db: Session) -> ProvisionResult:
 async def deprovision_device(device: Device) -> bool:
     try:
         if device.tunnel_type == "wireguard" and device.wg_public_key:
-            tenant_interface = device.tenant.wg_server_interface if device.tenant else "wg0"
-            await wireguard_controller.remove_peer(device.wg_public_key, interface=tenant_interface)
+            pass # Peer removal is synced via websocket to the hub
         elif device.tunnel_type == "zerotier" and device.network_id and device.zerotier_node_id:
             await zerotier_controller.deauthorize_member(device.network_id, device.zerotier_node_id)
         return True
@@ -54,8 +53,12 @@ async def deprovision_device(device: Device) -> bool:
 
 async def get_tunnel_status(device: Device) -> str:
     if device.tunnel_type == "wireguard" and device.wg_public_key:
-        tenant_interface = device.tenant.wg_server_interface if device.tenant else "wg0"
-        return await wireguard_controller.check_peer_status(device.wg_public_key, interface=tenant_interface)
+        from routers.devices import LIVE_WG_STATUSES
+        import time
+        last_heartbeat = LIVE_WG_STATUSES.get(device.wg_public_key, 0)
+        if last_heartbeat > 0 and (time.time() - last_heartbeat) < 180:
+            return "active"
+        return "offline"
     elif device.tunnel_type == "zerotier" and device.network_id and device.zerotier_node_id:
         return await zerotier_controller.check_member_status(device.network_id, device.zerotier_node_id)
     return "offline"
@@ -78,12 +81,12 @@ async def _provision_wireguard(device: Device, db: Session) -> ProvisionResult:
         
         tenant = device.tenant
         tenant_interface = tenant.wg_server_interface if tenant else "wg0"
-        await wireguard_controller.add_peer(pub_key, wg_ip, interface=tenant_interface)
+        # Peer addition is synced via websocket to the hub
         
         from config import get_settings
         settings = get_settings()
         
-        server_pubkey = tenant.wg_server_public_key if tenant and tenant.wg_server_public_key else await wireguard_controller.get_server_public_key(interface=tenant_interface)
+        server_pubkey = tenant.wg_server_public_key if tenant and tenant.wg_server_public_key else ""
         server_endpoint = tenant.wg_server_endpoint if tenant and tenant.wg_server_endpoint else getattr(settings, "WG_SERVER_ENDPOINT", "127.0.0.1:51820")
         
         conf = wireguard_controller.generate_client_config(

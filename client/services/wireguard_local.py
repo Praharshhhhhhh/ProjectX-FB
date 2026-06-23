@@ -255,6 +255,17 @@ def sync_hub_peers(interface: str, peers: list) -> bool:
         WG_CMD = r"C:\Program Files\WireGuard\wg.exe"
         ps_lines = []
         
+        # Get currently running peers
+        current_peers_out = subprocess.run([WG_CMD, "show", interface, "peers"], capture_output=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW).stdout
+        current_peers = set([p.strip() for p in current_peers_out.splitlines() if p.strip()])
+        
+        allowed_peers = set([p[0].strip() for p in peers])
+        
+        # 1. Remove revoked peers
+        for p in current_peers - allowed_peers:
+            ps_lines.append(f"& '{WG_CMD}' set {interface} peer '{p}' remove")
+        
+        # 2. Add/Update allowed peers
         for pub_key, allowed_ip in peers:
             ips = allowed_ip if "/" in allowed_ip else f"{allowed_ip}/32"
             ps_lines.append(f"& '{WG_CMD}' set {interface} peer '{pub_key}' allowed-ips {ips}")

@@ -1,7 +1,6 @@
 import json
 import time
 from PyQt6.QtCore import QObject, pyqtSignal, QThread
-# pyrefly: ignore [missing-import]
 import websocket
 
 class WebSocketWorker(QThread):
@@ -31,7 +30,8 @@ class WebSocketWorker(QThread):
                     self.url,
                     on_message=self._on_message,
                     on_error=self._on_error,
-                    on_close=self._on_close
+                    on_close=self._on_close,
+                    on_open=self._on_open
                 )
                 self.ws.run_forever(ping_interval=20, ping_timeout=10)
                 
@@ -40,6 +40,10 @@ class WebSocketWorker(QThread):
                     time.sleep(3)
         except Exception:
             pass
+
+    def _on_open(self, ws):
+        # Emit mesh_updated on reconnect to ensure Hub reconciles missed events
+        self.message_received.emit({"event": "mesh_updated"})
 
     def _on_message(self, ws, message):
         try:

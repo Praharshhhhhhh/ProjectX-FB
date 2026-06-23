@@ -229,7 +229,7 @@ async def register_wg_device(req: WgDeviceRegister, current_user: Annotated[User
                 db.flush()
                 existing = None
             else:
-                server_pubkey = tenant.wg_server_public_key if tenant and tenant.wg_server_public_key else await wireguard_controller.get_server_public_key(interface=tenant.wg_server_interface if tenant else "wg0")
+                server_pubkey = tenant.wg_server_public_key if tenant and tenant.wg_server_public_key else ""
                 config_str = wireguard_controller.generate_client_config("", existing.wg_ip, server_pubkey, server_endpoint, client_pubkey=existing.wg_public_key)
                 return {
                     "assigned_ip": existing.wg_ip,
@@ -249,7 +249,7 @@ async def register_wg_device(req: WgDeviceRegister, current_user: Annotated[User
         raise HTTPException(status_code=500, detail="WireGuard server could not generate keypair. Is WireGuard installed on the server?")
 
     assigned_ip = wireguard_controller.assign_ip_from_pool(db, current_user.tenant_id)
-    server_pubkey = await wireguard_controller.get_server_public_key(interface=tenant.wg_server_interface if tenant else "wg0")
+    server_pubkey = tenant.wg_server_public_key if tenant and tenant.wg_server_public_key else ""
     
     config_str = wireguard_controller.generate_client_config(priv_key, assigned_ip, server_pubkey, server_endpoint, client_pubkey=pub_key)
     
@@ -566,7 +566,7 @@ async def get_device_conf(device_id: int, current_user: Annotated[User, Depends(
     if tenant and tenant.wg_server_public_key:
         server_pubkey = tenant.wg_server_public_key
     else:
-        server_pubkey = await wireguard_controller.get_server_public_key(interface=tenant.wg_server_interface if tenant else "wg0")
+        server_pubkey = ""
         
     server_endpoint = tenant.wg_server_endpoint if tenant and tenant.wg_server_endpoint else getattr(settings, "WG_SERVER_ENDPOINT", "127.0.0.1:51820")
     

@@ -77,10 +77,12 @@ class App:
             try:
                 ws_client.mesh_updated.disconnect(self._on_mesh_updated)
                 ws_client.device_removed.disconnect(self._on_mesh_updated)
+                ws_client.device_updated.disconnect(self._on_mesh_updated)
             except TypeError:
                 pass
             ws_client.mesh_updated.connect(self._on_mesh_updated)
             ws_client.device_removed.connect(self._on_mesh_updated)
+            ws_client.device_updated.connect(self._on_mesh_updated)
             
         if token_data.get("requires_2fa") and not me.get("totp_enabled"):
             self._show_2fa_setup()
