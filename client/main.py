@@ -296,15 +296,22 @@ class App:
                         print("WireGuard registration failed:", e)
     
                     priv, pub = tunnel.get_or_create_keypair()
-                    if tunnel.is_zerotier_running():
-                        node_id = tunnel.get_node_info().get("address")
-                    else:
+                    try:
+                        from services import zerotier_local as zt
+                        if zt.is_zerotier_running():
+                            node_id = zt.get_node_info().get("address")
+                        else:
+                            node_id = None
+                    except ImportError:
                         node_id = None
                 else:
-                    if tunnel.is_zerotier_running():
-                        node_info = tunnel.get_node_info()
-                        node_id = node_info.get("address")
-                    else:
+                    try:
+                        from services import zerotier_local as zt
+                        if zt.is_zerotier_running():
+                            node_id = zt.get_node_info().get("address")
+                        else:
+                            node_id = None
+                    except ImportError:
                         node_id = None
     
                 if node_id:
