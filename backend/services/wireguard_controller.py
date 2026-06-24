@@ -123,11 +123,19 @@ def start_hub():
                 subprocess.run([wg_manager, "/uninstalltunnelservice", interface], capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW)
                 time.sleep(1)
                 
-                res = subprocess.run([wg_manager, "/installtunnelservice", conf_path], capture_output=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
-                if res.returncode == 0:
+                cmd = [wg_manager, "/installtunnelservice", conf_path]
+                try:
+                    res = subprocess.run(cmd, capture_output=True, text=True, check=True, creationflags=subprocess.CREATE_NO_WINDOW)
                     logging.info(f"Successfully started Windows WireGuard Hub on {interface}")
-                else:
-                    logging.error(f"Failed to start Windows Hub: {res.stderr}")
+                except (subprocess.CalledProcessError, OSError):
+                    # Fallback to UAC prompt
+                    try:
+                        args_joined = " ".join(f'"{str(a)}"' for a in cmd[1:])
+                        ps_cmd = f"Start-Process -FilePath '{cmd[0]}' -ArgumentList '{args_joined}' -Verb RunAs -WindowStyle Hidden -Wait"
+                        subprocess.run(["powershell", "-Command", ps_cmd], check=True, creationflags=subprocess.CREATE_NO_WINDOW)
+                        logging.info(f"Successfully started Windows WireGuard Hub on {interface} (via UAC elevation)")
+                    except Exception as e:
+                        logging.error(f"Failed to start Windows Hub (UAC fallback failed): {e}")
                     
         except Exception as e:
             logging.error(f"Exception starting Windows Hub: {e}")
