@@ -420,11 +420,11 @@ async def approve_device(device_id: int, current_user: Annotated[User, Depends(r
     if not result.success:
         raise HTTPException(status_code=500, detail=f"Provisioning failed: {result.error}")
 
-    if device.tunnel_type == "wireguard":
+    if device.tunnel_type in ("wireguard", "wg_over_zt"):
         device.wg_ip = result.wg_ip
         device.wg_public_key = result.wg_public_key
         device.wg_private_key = result.wg_private_key
-    elif device.tunnel_type == "zerotier":
+    if device.tunnel_type in ("zerotier", "wg_over_zt"):
         device.network_id = result.network_id
         device.zerotier_node_id = result.zerotier_node_id
 
