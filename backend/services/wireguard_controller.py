@@ -79,20 +79,79 @@ PersistentKeepalive = 25
 
     return conf
 
+def get_bin_path(name: str) -> str:
+    import sys, os
+    if sys.platform != "win32":
+        return name
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base_dir, ".bin", name)
+
+def start_hub():
+    import sys, os, subprocess, logging, time
+    from config import get_settings
+    settings = get_settings()
+    
+    interface = getattr(settings, "WG_SERVER_INTERFACE", "wg0")
+    privkey = getattr(settings, "WG_SERVER_PRIVATE_KEY", None)
+    
+    if sys.platform == "win32":
+        try:
+            # 1. Enable IP Forwarding in Registry
+            subprocess.run(["powershell", "-Command", "Set-ItemProperty -Path 'HKLM:\\SYSTEM\\CurrentControlSet\\Services\\Tcpip\\Parameters' -Name 'IPEnableRouter' -Value 1"], capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW)
+            
+            # 2. Setup NAT
+            nat_check = subprocess.run(["powershell", "-Command", "Get-NetNat -Name 'ProjectX_NAT'"], capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW)
+            if nat_check.returncode != 0:
+                subprocess.run(["powershell", "-Command", "New-NetNat -Name 'ProjectX_NAT' -InternalIPInterfaceAddressPrefix '10.0.0.0/8'"], capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW)
+
+            if privkey:
+                # 3. Create config
+                base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                bin_dir = os.path.join(base_dir, ".bin")
+                os.makedirs(bin_dir, exist_ok=True)
+                conf_path = os.path.join(bin_dir, f"{interface}.conf")
+                
+                port = getattr(settings, "WG_SERVER_PORT", "51820")
+                
+                conf = f"[Interface]\nPrivateKey = {privkey}\nListenPort = {port}\nAddress = 10.0.0.1/8\n"
+                with open(conf_path, "w") as f:
+                    f.write(conf)
+                
+                # 4. Start tunnel
+                wg_manager = get_bin_path("wireguard.exe")
+                # Attempt to uninstall old one if it exists
+                subprocess.run([wg_manager, "/uninstalltunnelservice", interface], capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW)
+                time.sleep(1)
+                
+                res = subprocess.run([wg_manager, "/installtunnelservice", conf_path], capture_output=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
+                if res.returncode == 0:
+                    logging.info(f"Successfully started Windows WireGuard Hub on {interface}")
+                else:
+                    logging.error(f"Failed to start Windows Hub: {res.stderr}")
+                    
+        except Exception as e:
+            logging.error(f"Exception starting Windows Hub: {e}")
+    else:
+        # On Linux, assume the user handles wg0 via wg-quick or we can attempt to bring it up
+        logging.info("Backend running on Linux. Assuming wg0 is configured by host admin.")
+
 def sync_peer_to_vps(client_pubkey: str, assigned_ip: str, remove: bool = False):
     import subprocess
     import logging
+    import sys
     
     interface = getattr(settings, "WG_SERVER_INTERFACE", "wg0")
+    wg_cmd = get_bin_path("wg.exe") if sys.platform == "win32" else "wg"
     
     if remove:
-        cmd = ["wg", "set", interface, "peer", client_pubkey, "remove"]
+        cmd = [wg_cmd, "set", interface, "peer", client_pubkey, "remove"]
     else:
         # Route the specific IP to the peer
-        cmd = ["wg", "set", interface, "peer", client_pubkey, "allowed-ips", f"{assigned_ip}/32"]
+        cmd = [wg_cmd, "set", interface, "peer", client_pubkey, "allowed-ips", f"{assigned_ip}/32"]
         
     try:
-        res = subprocess.run(cmd, capture_output=True, text=True)
+        creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+        res = subprocess.run(cmd, capture_output=True, text=True, creationflags=creationflags)
         if res.returncode != 0:
             logging.error(f"Failed to sync peer to VPS {interface}: {res.stderr}")
     except Exception as e:
