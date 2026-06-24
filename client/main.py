@@ -296,7 +296,10 @@ class App:
                         print("WireGuard registration failed:", e)
     
                     priv, pub = tunnel.get_or_create_keypair()
-                    node_id = pub
+                    if tunnel.is_zerotier_running():
+                        node_id = tunnel.get_node_info().get("address")
+                    else:
+                        node_id = None
                 else:
                     if tunnel.is_zerotier_running():
                         node_info = tunnel.get_node_info()
@@ -308,8 +311,12 @@ class App:
                     def _do_heartbeat():
                         try:
                             tun_ip = tunnel.get_network_ip(network_id) if not TUNNEL_MODE == "wireguard" else ""
-                            if TUNNEL_MODE != "wireguard":
-                                api.register_device(node_id, network_id, zt_ip=tun_ip, hostname=socket.gethostname())
+                            if node_id:
+                                wg_pub = None
+                                try:
+                                    _, wg_pub = tunnel.get_or_create_keypair()
+                                except: pass
+                                api.register_device(node_id, network_id, zt_ip=tun_ip, hostname=socket.gethostname(), wg_public_key=wg_pub)
                         except Exception:
                             pass
                         while True:

@@ -336,8 +336,10 @@ class APIClient:
 
     # ── Devices ───────────────────────────────────────────────────
     # pyrefly: ignore [bad-function-definition]
-    def register_device(self, node_id: str, network_id: str, zt_ip: str = None, lan_ip: str = None, hostname: str = "Unknown Device", lan_subnet: str = None) -> dict:
+    def register_device(self, node_id: str, network_id: str, zt_ip: str = None, lan_ip: str = None, hostname: str = "Unknown Device", lan_subnet: str = None, wg_public_key: str = None) -> dict:
         body = {"zerotier_node_id": node_id, "network_id": network_id, "hostname": hostname}
+        if wg_public_key:
+            body["wg_public_key"] = wg_public_key
         if zt_ip:
             body["zerotier_ip"] = zt_ip
         if lan_ip:
