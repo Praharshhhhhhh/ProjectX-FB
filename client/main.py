@@ -117,47 +117,7 @@ class App:
         self.root.set_view(self._claim)
 
     def _on_mesh_updated(self, *args):
-        import threading
-        def _sync():
-            try:
-                from services.api_client import api
-                from config import TUNNEL_MODE
-                if TUNNEL_MODE != "wireguard":
-                    return
-                    
-                res = api._req("GET", "/api/devices/wg-tunnel-peers")
-                if not res:
-                    return
-                    
-                server_pubkey = res.get("server_public_key")
-                server_interface = res.get("server_interface")
-                peers = res.get("peers", [])
-                
-                if not server_pubkey or not server_interface:
-                    return
-                
-                import subprocess, sys
-                WG_CMD = r"C:\Program Files\WireGuard\wg.exe" if sys.platform == "win32" else "wg"
-                creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
-                
-                local_pub = subprocess.run([WG_CMD, "show", server_interface, "public-key"], capture_output=True, text=True, creationflags=creationflags).stdout.strip()
-                
-                if local_pub == server_pubkey:
-                    peer_list = []
-                    for p in peers:
-                        allowed = p["wg_ip"] + "/32"
-                        if p.get("nat_virtual_pool"):
-                            allowed += f",{p['nat_virtual_pool']}.0/24"
-                        if p.get("lan_subnet"):
-                            allowed += f",{p['lan_subnet']}"
-                        peer_list.append((p["wg_public_key"], allowed))
-                    
-                    from services import wireguard_local
-                    wireguard_local.sync_hub_peers(server_interface, peer_list)
-            except Exception as e:
-                print("Failed to sync hub peers:", e)
-                
-        threading.Thread(target=_sync, daemon=True).start()
+        pass
 
     # ── Main portal ───────────────────────────────────────────────
     def _show_main(self):

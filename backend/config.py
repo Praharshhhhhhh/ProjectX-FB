@@ -23,6 +23,9 @@ class Settings(BaseSettings):
 
     WG_SERVER_ENDPOINT: str = "127.0.0.1:51820"
     WG_SERVER_ENDPOINT_SECONDARY: str = ""
+    WG_SERVER_PUBLIC_KEY: str = ""
+    WG_SERVER_PRIVATE_KEY: str = ""
+    WG_SERVER_INTERFACE: str = "wg0"
 
     BACKEND_URL: str = "http://localhost:8000"
 
