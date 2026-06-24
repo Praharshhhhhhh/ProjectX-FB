@@ -179,7 +179,7 @@ class App:
                         pub_ip, pub_port = tunnel.discover_stun(listen_port)
                         if pub_ip and pub_port:
                             print(f"STUN Discovered Endpoint: {pub_ip}:{pub_port}")
-                            api.update_wg_endpoint(device_id, f"{pub_ip}:{pub_port}")
+                            # WireGuard handles endpoint updating automatically via incoming packets + PersistentKeepalive
                             
                         config_changed = tunnel.write_config(priv, assigned_ip, server_pubkey, server_endpoint, config_path, listen_port)
                         
