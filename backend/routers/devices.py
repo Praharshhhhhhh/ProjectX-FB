@@ -559,6 +559,12 @@ async def reprovision_device(
             device.wg_public_key = None
             device.wg_private_key = None
             device.wg_ip = None
+        elif device.tunnel_type == "wg_over_zt":
+            device.wg_ip = result.wg_ip
+            device.wg_public_key = result.wg_public_key
+            device.wg_private_key = result.wg_private_key
+            device.network_id = result.network_id
+            device.zerotier_node_id = result.zerotier_node_id
             
         device.re_provision_requested = False
         db.commit()
