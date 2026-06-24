@@ -159,8 +159,19 @@ def sync_peer_to_vps(client_pubkey: str, assigned_ip: str, remove: bool = False)
         
     try:
         creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
-        res = subprocess.run(cmd, capture_output=True, text=True, creationflags=creationflags)
-        if res.returncode != 0:
-            logging.error(f"Failed to sync peer to VPS {interface}: {res.stderr}")
+        res = subprocess.run(cmd, capture_output=True, text=True, check=True, creationflags=creationflags)
+        logging.info(f"Successfully synced peer to {interface}")
+    except (subprocess.CalledProcessError, OSError) as e:
+        # Fallback to UAC prompt for Windows
+        if sys.platform == "win32":
+            try:
+                args_joined = " ".join(f'"{str(a)}"' for a in cmd[1:])
+                ps_cmd = f"Start-Process -FilePath '{cmd[0]}' -ArgumentList '{args_joined}' -Verb RunAs -WindowStyle Hidden -Wait"
+                subprocess.run(["powershell", "-Command", ps_cmd], check=True, creationflags=subprocess.CREATE_NO_WINDOW)
+                logging.info(f"Successfully synced peer to {interface} (via UAC elevation)")
+            except Exception as inner_e:
+                logging.error(f"Failed to sync peer to VPS {interface} (UAC fallback failed): {inner_e}")
+        else:
+            logging.error(f"Failed to sync peer to VPS {interface}: {e}")
     except Exception as e:
         logging.error(f"Exception syncing peer to VPS {interface}: {e}")
