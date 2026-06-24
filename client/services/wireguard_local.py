@@ -249,3 +249,47 @@ def get_device_capability() -> dict:
         
     return cap
 
+
+def discover_stun(port=51820):
+    import socket
+    import struct
+    stun_host = "stun.l.google.com"
+    stun_port = 19302
+
+    tx_id = b'\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c'
+    req = struct.pack("!HHL12s", 0x0001, 0, 0x2112A442, tx_id)
+
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.bind(("0.0.0.0", port))
+    except Exception:
+        pass
+    
+    sock.settimeout(2.0)
+
+    try:
+        sock.sendto(req, (stun_host, stun_port))
+        data, _ = sock.recvfrom(2048)
+        
+        msg_type, msg_len, cookie, resp_tx_id = struct.unpack("!HHL12s", data[:20])
+        
+        if msg_type == 0x0101 and resp_tx_id == tx_id:
+            offset = 20
+            while offset < len(data):
+                attr_type, attr_len = struct.unpack("!HH", data[offset:offset+4])
+                offset += 4
+                
+                if attr_type == 0x0020:
+                    _, family, xport, xip = struct.unpack("!BBHL", data[offset:offset+8])
+                    if family == 0x01:
+                        mapped_port = xport ^ (0x2112A442 >> 16)
+                        mapped_ip = xip ^ 0x2112A442
+                        ip_str = socket.inet_ntoa(struct.pack("!L", mapped_ip))
+                        return ip_str, mapped_port
+                offset += attr_len
+    except Exception as e:
+        print(f"STUN error: {e}")
+    finally:
+        sock.close()
+    return None, None
