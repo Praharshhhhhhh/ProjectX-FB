@@ -218,8 +218,9 @@ async def register_wg_device(req: WgDeviceRegister, current_user: Annotated[User
     tenant = db.query(Tenant).filter(Tenant.id == current_user.tenant_id).first()
     from config import get_settings
     settings = get_settings()
-    server_endpoint = tenant.wg_server_endpoint if tenant and tenant.wg_server_endpoint else getattr(settings, "WG_SERVER_ENDPOINT", "127.0.0.1:51820")
-    server_endpoint_secondary = tenant.wg_server_endpoint_secondary if tenant and tenant.wg_server_endpoint_secondary else getattr(settings, "WG_SERVER_ENDPOINT_SECONDARY", "")
+    server_endpoint = getattr(settings, "WG_SERVER_ENDPOINT", "127.0.0.1:51820")
+    server_endpoint_secondary = getattr(settings, "WG_SERVER_ENDPOINT_SECONDARY", "")
+    server_pubkey = getattr(settings, "WG_SERVER_PUBLIC_KEY", "")
 
     if req.wg_public_key:
         existing = db.query(Device).filter(Device.wg_public_key == req.wg_public_key).first()
@@ -229,8 +230,8 @@ async def register_wg_device(req: WgDeviceRegister, current_user: Annotated[User
                 db.flush()
                 existing = None
             else:
-                server_pubkey = tenant.wg_server_public_key if tenant and tenant.wg_server_public_key else ""
                 config_str = wireguard_controller.generate_client_config("", existing.wg_ip, server_pubkey, server_endpoint, client_pubkey=existing.wg_public_key)
+                wireguard_controller.sync_peer_to_vps(existing.wg_public_key, existing.wg_ip)
                 return {
                     "assigned_ip": existing.wg_ip,
                     "server_pubkey": server_pubkey,
@@ -249,9 +250,9 @@ async def register_wg_device(req: WgDeviceRegister, current_user: Annotated[User
         raise HTTPException(status_code=500, detail="WireGuard server could not generate keypair. Is WireGuard installed on the server?")
 
     assigned_ip = wireguard_controller.assign_ip_from_pool(db, current_user.tenant_id)
-    server_pubkey = tenant.wg_server_public_key if tenant and tenant.wg_server_public_key else ""
     
     config_str = wireguard_controller.generate_client_config(priv_key, assigned_ip, server_pubkey, server_endpoint, client_pubkey=pub_key)
+    wireguard_controller.sync_peer_to_vps(pub_key, assigned_ip)
     
     device = Device(
         tenant_id=current_user.tenant_id,
@@ -480,6 +481,8 @@ async def remove_device(device_id: int, current_user: Annotated[User, Depends(re
         user_name=current_user.full_name, level=AuditLevel.warning)
     
     dev_id = device.id
+    if device.tunnel_type == "wireguard" and device.wg_public_key:
+        wireguard_controller.sync_peer_to_vps(device.wg_public_key, device.wg_ip, remove=True)
     db.delete(device)
     db.commit()
     await manager.broadcast_to_tenant(current_user.tenant_id, {"event": "device_removed", "device_id": dev_id})
@@ -564,13 +567,8 @@ async def get_device_conf(device_id: int, current_user: Annotated[User, Depends(
     settings = get_settings()
     tenant = db.query(Tenant).filter(Tenant.id == device.tenant_id).first()
     
-    server_pubkey = ""
-    if tenant and tenant.wg_server_public_key:
-        server_pubkey = tenant.wg_server_public_key
-    else:
-        server_pubkey = ""
-        
-    server_endpoint = tenant.wg_server_endpoint if tenant and tenant.wg_server_endpoint else getattr(settings, "WG_SERVER_ENDPOINT", "127.0.0.1:51820")
+    server_pubkey = getattr(settings, "WG_SERVER_PUBLIC_KEY", "")
+    server_endpoint = getattr(settings, "WG_SERVER_ENDPOINT", "127.0.0.1:51820")
     
     conf = wireguard_controller.generate_client_config(
         private_key=device.wg_private_key,

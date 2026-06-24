@@ -78,3 +78,22 @@ PersistentKeepalive = 25
 """
 
     return conf
+
+def sync_peer_to_vps(client_pubkey: str, assigned_ip: str, remove: bool = False):
+    import subprocess
+    import logging
+    
+    interface = getattr(settings, "WG_SERVER_INTERFACE", "wg0")
+    
+    if remove:
+        cmd = ["wg", "set", interface, "peer", client_pubkey, "remove"]
+    else:
+        # Route the specific IP to the peer
+        cmd = ["wg", "set", interface, "peer", client_pubkey, "allowed-ips", f"{assigned_ip}/32"]
+        
+    try:
+        res = subprocess.run(cmd, capture_output=True, text=True)
+        if res.returncode != 0:
+            logging.error(f"Failed to sync peer to VPS {interface}: {res.stderr}")
+    except Exception as e:
+        logging.error(f"Exception syncing peer to VPS {interface}: {e}")
