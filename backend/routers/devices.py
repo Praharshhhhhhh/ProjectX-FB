@@ -402,12 +402,15 @@ async def get_wg_tunnel_peers(
 
 
 @router.post("/{device_id}/approve")
-async def approve_device(device_id: int, current_user: Annotated[User, Depends(require_master_or_above)], db: Annotated[Session, Depends(get_db)]):
+async def approve_device(device_id: int, current_user: Annotated[User, Depends(require_master_or_above)], db: Annotated[Session, Depends(get_db)], tunnel_type: str = None):
     device = db.query(Device).filter(Device.id == device_id, Device.tenant_id == current_user.tenant_id).first()
     if not device:
         raise HTTPException(status_code=404, detail="Device not found")
     if device.is_approved:
         raise HTTPException(status_code=400, detail="Already approved")
+
+    if tunnel_type:
+        device.forced_tunnel_type = tunnel_type
 
     capability = json.loads(device.device_capability or "{}")
     new_tunnel_type = await decide_tunnel_type(capability, device.forced_tunnel_type)
