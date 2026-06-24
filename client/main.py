@@ -88,7 +88,8 @@ class App:
             self._show_2fa_setup()
         else:
             role = me.get("role")
-            if role in ("master", "second_master") and not (me.get("network_id") or me.get("has_wg_server")):
+            from config import TUNNEL_MODE
+            if TUNNEL_MODE == "zerotier" and role in ("master", "second_master") and not me.get("network_id"):
                 self._show_claim_network()
             else:
                 self._show_main()
@@ -106,7 +107,8 @@ class App:
     def _after_2fa(self):
         self._user_info = api.get_me()
         role = self._user_info.get("role")
-        if role in ("master", "second_master") and not (self._user_info.get("network_id") or self._user_info.get("has_wg_server")):
+        from config import TUNNEL_MODE
+        if TUNNEL_MODE == "zerotier" and role in ("master", "second_master") and not self._user_info.get("network_id"):
             self._show_claim_network()
         else:
             self._show_main()
@@ -137,7 +139,7 @@ class App:
         role = self._user_info.get("role")
         has_wg_server = self._user_info.get("has_wg_server")
 
-        if network_id or (TUNNEL_MODE == "wireguard" and role != "system_owner" and has_wg_server):
+        if network_id or TUNNEL_MODE == "wireguard":
             import threading
             import socket
             import time
