@@ -1,6 +1,7 @@
 import services.wireguard_local as wg
 import services.zerotier_local as zt
 import os
+import time
 from config import WG_CONFIG_DIR
 
 class TunnelManager:
@@ -14,7 +15,7 @@ class TunnelManager:
     @classmethod
     def is_local_device(cls, device: dict) -> bool:
         tunnel_type = device.get("connection_info", {}).get("tunnel_type", "zerotier")
-        if tunnel_type == "wireguard":
+        if tunnel_type in ("wireguard", "wg_over_zt"):
             existing_priv, existing_pub = wg.get_or_create_keypair()
             return device.get("wg_public_key") == existing_pub
         else:
@@ -23,7 +24,12 @@ class TunnelManager:
             return device.get("zerotier_node_id") == node_id
 
     def connect(self, api_client, conf_data: str = None) -> bool:
-        if self.tunnel_type == "wireguard":
+        if self.tunnel_type in ("wireguard", "wg_over_zt"):
+            if self.tunnel_type == "wg_over_zt":
+                if self.network_id:
+                    zt.connect(self.network_id)
+                    time.sleep(5) # wait for ZT IP
+                    
             if not conf_data:
                 conf_data = api_client.download_conf(self.device_id)
             if not conf_data:
@@ -50,17 +56,20 @@ class TunnelManager:
             return zt.connect(self.network_id)
 
     def disconnect(self) -> bool:
-        if self.tunnel_type == "wireguard":
+        if self.tunnel_type in ("wireguard", "wg_over_zt"):
             from config import WG_INTERFACE
             config_path = os.path.join(WG_CONFIG_DIR, f"{WG_INTERFACE}.conf")
-            return wg.disconnect(config_path)
+            res = wg.disconnect(config_path)
+            if self.tunnel_type == "wg_over_zt" and self.network_id:
+                zt.disconnect(self.network_id)
+            return res
         else:
             if not self.network_id:
                 return False
             return zt.disconnect(self.network_id)
 
     def get_status(self) -> str:
-        if self.tunnel_type == "wireguard":
+        if self.tunnel_type in ("wireguard", "wg_over_zt"):
             from config import WG_INTERFACE
             config_path = os.path.join(WG_CONFIG_DIR, f"{WG_INTERFACE}.conf")
             return wg.get_status(config_path)

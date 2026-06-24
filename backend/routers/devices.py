@@ -556,8 +556,8 @@ async def get_device_conf(device_id: int, current_user: Annotated[User, Depends(
     device = db.query(Device).filter(Device.id == device_id).first()
     if not device or not _user_can_see(current_user, device, db):
         raise HTTPException(status_code=404, detail="Device not found")
-    if device.tunnel_type != "wireguard":
-        raise HTTPException(403, "Not a WireGuard device")
+    if device.tunnel_type not in ("wireguard", "wg_over_zt"):
+        raise HTTPException(403, "Not a WireGuard or wg_over_zt device")
     # private key might be absent if device registered its own public key
     
     from config import get_settings
@@ -570,7 +570,10 @@ async def get_device_conf(device_id: int, current_user: Annotated[User, Depends(
     else:
         server_pubkey = ""
         
-    server_endpoint = tenant.wg_server_endpoint if tenant and tenant.wg_server_endpoint else getattr(settings, "WG_SERVER_ENDPOINT", "127.0.0.1:51820")
+    if device.tunnel_type == "wg_over_zt" and tenant and tenant.wg_server_endpoint_secondary:
+        server_endpoint = tenant.wg_server_endpoint_secondary
+    else:
+        server_endpoint = tenant.wg_server_endpoint if tenant and tenant.wg_server_endpoint else getattr(settings, "WG_SERVER_ENDPOINT", "127.0.0.1:51820")
     
     conf = wireguard_controller.generate_client_config(
         private_key=device.wg_private_key,
@@ -680,16 +683,16 @@ async def change_network_mode(
 
 
 def _device_dict(d: Device, hide_network: bool = False) -> dict:
-    virtual_ip = d.wg_ip if d.tunnel_type == "wireguard" else d.zerotier_ip
-    conf_url = f"/api/devices/{d.id}/conf" if d.tunnel_type == "wireguard" else None
+    virtual_ip = d.wg_ip if d.tunnel_type in ("wireguard", "wg_over_zt") else d.zerotier_ip
+    conf_url = f"/api/devices/{d.id}/conf" if d.tunnel_type in ("wireguard", "wg_over_zt") else None
     
     connection_info = {
         "tunnel_type": d.tunnel_type or "unknown",
         "virtual_ip": virtual_ip,
         "status": d.status.value if hasattr(d.status, "value") else str(d.status),
         "conf_download_url": conf_url,
-        "network_id": d.network_id if d.tunnel_type == "zerotier" else None,
-        "node_id": d.zerotier_node_id if d.tunnel_type == "zerotier" else None,
+        "network_id": d.network_id if d.tunnel_type in ("zerotier", "wg_over_zt") else None,
+        "node_id": d.zerotier_node_id if d.tunnel_type in ("zerotier", "wg_over_zt") else None,
     }
     
     from sqlalchemy.orm import object_session
