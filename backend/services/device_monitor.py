@@ -7,7 +7,7 @@ from models import Device, DeviceStatus
 # pyrefly: ignore [missing-import]
 from services.zerotier_controller import check_member_status
 # pyrefly: ignore [missing-import]
-from services import wireguard_controller
+# wireguard_controller no longer exposes check_peer_status
 import asyncio
 import logging
 
@@ -27,8 +27,10 @@ async def refresh_device_statuses():
                         device.status = DeviceStatus.active
                     continue
 
-                tenant_interface = device.tenant.wg_server_interface if device.tenant else "wg0"
-                status_str = await wireguard_controller.check_peer_status(device.wg_public_key, interface=tenant_interface)
+                from routers.devices import LIVE_WG_STATUSES
+                import time
+                last_handshake = LIVE_WG_STATUSES.get(device.wg_public_key, 0)
+                status_str = "active" if last_handshake > 0 and (time.time() - last_handshake) < 180 else "offline"
                 new_status = DeviceStatus(status_str)
                 if device.status != new_status:
                     device.status = new_status

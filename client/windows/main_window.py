@@ -2068,10 +2068,13 @@ class MainWindow(QMainWindow):
         self._timer.timeout.connect(self._do_refresh)
         self._timer.start(30000)
 
-        # Keep the banner text updated every minute
         self._banner_timer = QTimer(self)
         self._banner_timer.timeout.connect(self._update_offline_banner)
         self._banner_timer.start(60000)
+
+        self._tunnel_timer = QTimer(self)
+        self._tunnel_timer.timeout.connect(self._update_tunnel_status)
+        self._tunnel_timer.start(5000)
 
     def _do_refresh(self):
         page = getattr(self, "_pages", {}).get(self._current_page, getattr(self, "_pages", {}).get("devices"))
@@ -2136,6 +2139,15 @@ class MainWindow(QMainWindow):
             self._offline_banner.show()
         else:
             self._offline_banner.hide()
+
+    def _update_tunnel_status(self):
+        if not hasattr(self, 'tunnel_status_lbl'):
+            return
+        tun_name = "WireGuard" if TUNNEL_MODE == "wireguard" else "ZeroTier"
+        is_running = is_tunnel_running()
+        self.tunnel_status_lbl.setText(f"● {tun_name} Active" if is_running else f"○ {tun_name} Inactive")
+        color = "#4ade80" if is_running else "#f87171"
+        self.tunnel_status_lbl.setStyleSheet(f"color:{color};font-size:12px;padding:8px 18px")
 
     def _build(self):
         root = QWidget(); root.setObjectName("root")
@@ -2217,10 +2229,10 @@ class MainWindow(QMainWindow):
         sb.addStretch()
         tun_name = "WireGuard" if TUNNEL_MODE == "wireguard" else "ZeroTier"
         is_running = is_tunnel_running()
-        zt_lbl = QLabel(f"● {tun_name} Active" if is_running else f"○ {tun_name} Inactive")
+        self.tunnel_status_lbl = QLabel(f"● {tun_name} Active" if is_running else f"○ {tun_name} Inactive")
         color = "#4ade80" if is_running else "#f87171"
-        zt_lbl.setStyleSheet(f"color:{color};font-size:12px;padding:8px 18px")
-        sb.addWidget(zt_lbl)
+        self.tunnel_status_lbl.setStyleSheet(f"color:{color};font-size:12px;padding:8px 18px")
+        sb.addWidget(self.tunnel_status_lbl)
 
         logout_btn = QPushButton("  Logout")
         logout_btn.setObjectName("nav-logout")

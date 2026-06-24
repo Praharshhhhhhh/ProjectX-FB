@@ -264,13 +264,16 @@ def sync_hub_peers(interface: str, peers: list) -> bool:
         # 1. Remove revoked peers
         for p in current_peers - allowed_peers:
             ps_lines.append(f"& '{WG_CMD}' set {interface} peer '{p}' remove")
+            ps_lines.append("if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }")
         
         # 2. Add/Update allowed peers
         for pub_key, allowed_ip in peers:
             ips = allowed_ip if "/" in allowed_ip else f"{allowed_ip}/32"
             ps_lines.append(f"& '{WG_CMD}' set {interface} peer '{pub_key}' allowed-ips {ips}")
+            ps_lines.append("if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }")
             
         ps_lines.append(f"Set-NetIPInterface -InterfaceAlias {interface} -Forwarding Enabled -WeakHostSend Enabled -WeakHostReceive Enabled")
+        ps_lines.append("if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }")
         
         ps_cmd = "\n".join(ps_lines)
         
