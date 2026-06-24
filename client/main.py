@@ -120,6 +120,7 @@ class App:
 
     def _on_mesh_updated(self, *args):
         pass
+    
 
     # ── Main portal ───────────────────────────────────────────────
     def _show_main(self):
@@ -181,7 +182,7 @@ class App:
                             print(f"STUN Discovered Endpoint: {pub_ip}:{pub_port}")
                             # WireGuard handles endpoint updating automatically via incoming packets + PersistentKeepalive
                             
-                        config_changed = tunnel.write_config(priv, assigned_ip, server_pubkey, server_endpoint, config_path, listen_port)
+                        config_changed = tunnel.write_config(priv, assigned_ip, server_pubkey, server_endpoint, config_path)
                         
                         import json
                         failover_path = os.path.join(WG_CONFIG_DIR, "failover.json")
