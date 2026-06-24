@@ -227,6 +227,9 @@ class App:
                         time.sleep(10)
                 
                 threading.Thread(target=_do_hub_heartbeat, daemon=True).start()
+                
+                # Trigger an initial sync of peers on startup so we don't have to wait for a websocket event
+                self._on_mesh_updated()
 
             if not is_hub:
                 import threading
