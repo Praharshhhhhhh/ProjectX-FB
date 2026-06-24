@@ -312,7 +312,11 @@ class App:
                         try:
                             tun_ip = tunnel.get_network_ip(network_id) if not TUNNEL_MODE == "wireguard" else ""
                             if node_id:
-                                api.register_device(node_id, network_id, zt_ip=tun_ip, hostname=socket.gethostname())
+                                wg_pub = None
+                                try:
+                                    _, wg_pub = tunnel.get_or_create_keypair()
+                                except: pass
+                                api.register_device(node_id, network_id, zt_ip=tun_ip, hostname=socket.gethostname(), wg_public_key=wg_pub)
                         except Exception:
                             pass
                         while True:

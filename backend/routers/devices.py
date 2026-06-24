@@ -184,25 +184,39 @@ async def register_device(req: DeviceRegister, db: Annotated[Session, Depends(ge
     if not owner_user or owner_user.role not in (UserRole.master, UserRole.second_master):
         raise HTTPException(status_code=403, detail="Network ID is not owned by an active master or second master user")
     existing = db.query(Device).filter(Device.zerotier_node_id == req.zerotier_node_id).first()
+    
+    if not existing and req.wg_public_key:
+        existing = db.query(Device).filter(Device.wg_public_key == req.wg_public_key).first()
+        
     if existing:
         if existing.tenant_id != tenant.id:
             db.delete(existing)
             db.flush()
+            existing = None
         else:
-            return {"message": "Already registered", "device_id": existing.id}
-    device = Device(
-        tenant_id=tenant.id,
-        owner_id=owner_user.id,
-        zerotier_node_id=req.zerotier_node_id,
-        network_id=req.network_id,
-        zerotier_ip=req.zerotier_ip,
-        lan_ip=req.lan_ip,
-        lan_subnet=req.lan_subnet,
-        device_capability=json.dumps(req.device_capability) if hasattr(req, "device_capability") and req.device_capability else None,
-        status=DeviceStatus.pending,
-        is_approved=False,
-    )
-    db.add(device)
+            if req.zerotier_node_id and not existing.zerotier_node_id:
+                existing.zerotier_node_id = req.zerotier_node_id
+            if req.network_id and not existing.network_id:
+                existing.network_id = req.network_id
+            if req.zerotier_ip:
+                existing.zerotier_ip = req.zerotier_ip
+            db.commit()
+            return {"message": "Already registered (linked ZT to WG)", "device_id": existing.id}
+
+    if not existing:
+        device = Device(
+            tenant_id=tenant.id,
+            owner_id=owner_user.id,
+            zerotier_node_id=req.zerotier_node_id,
+            network_id=req.network_id,
+            zerotier_ip=req.zerotier_ip,
+            lan_ip=req.lan_ip,
+            lan_subnet=req.lan_subnet,
+            device_capability=json.dumps(req.device_capability) if hasattr(req, "device_capability") and req.device_capability else None,
+            status=DeviceStatus.pending,
+            is_approved=False,
+        )
+        db.add(device)
     db.commit()
     db.refresh(device)
     log(db, "device_registered", f"New device {req.zerotier_node_id} registered (pending approval)",
