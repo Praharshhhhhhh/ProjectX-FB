@@ -43,7 +43,13 @@ def get_or_create_keypair(storage_path: str = WG_KEY_STORAGE) -> Tuple[str, str]
             json.dump({"private_key": priv, "public_key": pub}, f)
     return priv, pub
 
-WG_CMD = r"C:\Program Files\WireGuard\wg.exe" if sys.platform == "win32" else "wg"
+def get_bin_path(name: str) -> str:
+    if sys.platform != "win32":
+        return name
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base_dir, ".bin", name)
+
+WG_CMD = get_bin_path("wg.exe")
 
 def generate_keypair() -> Tuple[str, str]:
     try:
@@ -104,7 +110,7 @@ def connect(config_name_or_path: str) -> bool:
         path = config_name_or_path
         if not path.endswith(".conf"):
             path = os.path.join(WG_CONFIG_DIR, f"{config_name_or_path}.conf")
-        wg_manager = r"C:\Program Files\WireGuard\wireguard.exe"
+        wg_manager = get_bin_path("wireguard.exe")
         cmd = [wg_manager, "/installtunnelservice", path]
     else:
         name = os.path.basename(config_name_or_path).replace(".conf", "")
@@ -115,7 +121,7 @@ def connect(config_name_or_path: str) -> bool:
 def disconnect(config_name: str) -> bool:
     if sys.platform == "win32":
         name = os.path.basename(config_name).replace(".conf", "")
-        wg_manager = r"C:\Program Files\WireGuard\wireguard.exe"
+        wg_manager = get_bin_path("wireguard.exe")
         cmd = [wg_manager, "/uninstalltunnelservice", name]
     else:
         name = os.path.basename(config_name).replace(".conf", "")
