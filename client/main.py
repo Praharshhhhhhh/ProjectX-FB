@@ -203,9 +203,9 @@ class App:
                         if config_changed:
                             if was_running:
                                 tunnel.disconnect(WG_INTERFACE)
-                            tunnel.connect(WG_INTERFACE, assigned_ip)
+                            tunnel.connect(WG_INTERFACE)
                         elif not was_running:
-                            tunnel.connect(WG_INTERFACE, assigned_ip)
+                            tunnel.connect(WG_INTERFACE)
                     else:
                         print("WireGuard registration error: Backend did not return valid details. (Is the wg0 interface running on the server?)")
                 except Exception as e:
