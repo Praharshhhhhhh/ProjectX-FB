@@ -145,7 +145,12 @@ class App:
                 if local_pub == server_pubkey:
                     peer_list = []
                     for p in peers:
-                        peer_list.append((p["wg_public_key"], p["wg_ip"] + "/32"))
+                        allowed = p["wg_ip"] + "/32"
+                        if p.get("nat_virtual_pool"):
+                            allowed += f",{p['nat_virtual_pool']}.0/24"
+                        if p.get("lan_subnet"):
+                            allowed += f",{p['lan_subnet']}"
+                        peer_list.append((p["wg_public_key"], allowed))
                     
                     from services import wireguard_local
                     wireguard_local.sync_hub_peers(server_interface, peer_list)

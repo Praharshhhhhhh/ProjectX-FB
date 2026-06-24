@@ -386,6 +386,8 @@ async def get_wg_tunnel_peers(
             "status": live_status,
             "db_status": device.status,
             "created_at": device.created_at.isoformat() if device.created_at else None,
+            "nat_virtual_pool": device.nat_virtual_pool,
+            "lan_subnet": device.lan_subnet,
         })
     
     return {
