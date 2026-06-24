@@ -569,13 +569,7 @@ class DevicesPage(QWidget):
             self._tbl.setFixedHeight(total_height)
 
     def _approve(self, did: int):
-        from PyQt6.QtWidgets import QInputDialog
-        options = ["Auto-Detect", "wg_over_zt", "wireguard", "zerotier"]
-        choice, ok = QInputDialog.getItem(self, "Approve Device", "Select Tunnel Type:", options, 0, False)
-        if not ok: return
-        ttype = choice if choice != "Auto-Detect" else None
-        
-        self._aw = Worker(self.api.approve_device, did, tunnel_type=ttype)
+        self._aw = Worker(self.api.approve_device, did)
         self._aw.result.connect(lambda _: (self.refresh(), self._alert.show_success("Device approved")))
         self._aw.error.connect(self._alert.show_error)
         self._aw.start()

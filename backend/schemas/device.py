@@ -57,7 +57,6 @@ class DeviceRegister(BaseModel):
     zerotier_node_id: str
     network_id: Optional[str] = None
     hostname: str = "Unknown Device"
-    wg_public_key: Optional[str] = None
     zerotier_ip: Optional[str] = None
     lan_ip: Optional[str] = None
     lan_subnet: Optional[str] = None

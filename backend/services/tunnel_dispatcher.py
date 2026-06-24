@@ -22,7 +22,7 @@ class ProvisionResult:
     error: Optional[str] = None
 
 async def decide_tunnel_type(capability: Optional[dict], forced: Optional[str]) -> str:
-    if forced in ("wireguard", "zerotier", "wg_over_zt"):
+    if forced in ("wireguard", "zerotier"):
         return forced
     if not capability:
         return "zerotier"
@@ -38,16 +38,13 @@ async def provision_device(device: Device, db: Session) -> ProvisionResult:
         return await _provision_wireguard(device, db)
     elif device.tunnel_type == "zerotier":
         return await _provision_zerotier(device, db)
-    elif device.tunnel_type == "wg_over_zt":
-        return await _provision_wg_over_zt(device, db)
     return ProvisionResult(success=False, tunnel_type="unknown", error="tunnel_type not set on device")
 
 async def deprovision_device(device: Device) -> bool:
     try:
-        if device.tunnel_type in ("wireguard", "wg_over_zt") and device.wg_public_key:
+        if device.tunnel_type == "wireguard" and device.wg_public_key:
             pass # Peer removal is synced via websocket to the hub
-            
-        if device.tunnel_type in ("zerotier", "wg_over_zt") and device.network_id and device.zerotier_node_id:
+        elif device.tunnel_type == "zerotier" and device.network_id and device.zerotier_node_id:
             await zerotier_controller.deauthorize_member(device.network_id, device.zerotier_node_id)
         return True
     except Exception as e:
@@ -55,7 +52,7 @@ async def deprovision_device(device: Device) -> bool:
         return False
 
 async def get_tunnel_status(device: Device) -> str:
-    if device.tunnel_type in ("wireguard", "wg_over_zt") and device.wg_public_key:
+    if device.tunnel_type == "wireguard" and device.wg_public_key:
         from routers.devices import LIVE_WG_STATUSES
         import time
         last_heartbeat = LIVE_WG_STATUSES.get(device.wg_public_key, 0)
@@ -128,26 +125,3 @@ async def _provision_zerotier(device: Device, db: Session) -> ProvisionResult:
     except Exception as e:
         logger.error(f"ZT Provisioning failed: {e}")
         return ProvisionResult(success=False, tunnel_type="zerotier", error=str(e))
-
-async def _provision_wg_over_zt(device: Device, db: Session) -> ProvisionResult:
-    # First provision ZeroTier
-    zt_res = await _provision_zerotier(device, db)
-    if not zt_res.success:
-        return zt_res
-        
-    # Then provision WireGuard
-    wg_res = await _provision_wireguard(device, db)
-    if not wg_res.success:
-        return wg_res
-        
-    # Combine results
-    return ProvisionResult(
-        success=True,
-        tunnel_type="wg_over_zt",
-        network_id=zt_res.network_id,
-        zerotier_node_id=zt_res.zerotier_node_id,
-        wg_ip=wg_res.wg_ip,
-        wg_public_key=wg_res.wg_public_key,
-        wg_private_key=wg_res.wg_private_key,
-        conf_content=wg_res.conf_content
-    )

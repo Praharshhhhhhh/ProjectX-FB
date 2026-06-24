@@ -296,34 +296,20 @@ class App:
                         print("WireGuard registration failed:", e)
     
                     priv, pub = tunnel.get_or_create_keypair()
-                    try:
-                        from services import zerotier_local as zt
-                        if zt.is_zerotier_running():
-                            node_id = zt.get_node_info().get("address")
-                        else:
-                            node_id = None
-                    except ImportError:
-                        node_id = None
+                    node_id = pub
                 else:
-                    try:
-                        from services import zerotier_local as zt
-                        if zt.is_zerotier_running():
-                            node_id = zt.get_node_info().get("address")
-                        else:
-                            node_id = None
-                    except ImportError:
+                    if tunnel.is_zerotier_running():
+                        node_info = tunnel.get_node_info()
+                        node_id = node_info.get("address")
+                    else:
                         node_id = None
     
                 if node_id:
                     def _do_heartbeat():
                         try:
                             tun_ip = tunnel.get_network_ip(network_id) if not TUNNEL_MODE == "wireguard" else ""
-                            if node_id:
-                                wg_pub = None
-                                try:
-                                    _, wg_pub = tunnel.get_or_create_keypair()
-                                except: pass
-                                api.register_device(node_id, network_id, zt_ip=tun_ip, hostname=socket.gethostname(), wg_public_key=wg_pub)
+                            if TUNNEL_MODE != "wireguard":
+                                api.register_device(node_id, network_id, zt_ip=tun_ip, hostname=socket.gethostname())
                         except Exception:
                             pass
                         while True:

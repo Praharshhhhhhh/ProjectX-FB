@@ -184,40 +184,25 @@ async def register_device(req: DeviceRegister, db: Annotated[Session, Depends(ge
     if not owner_user or owner_user.role not in (UserRole.master, UserRole.second_master):
         raise HTTPException(status_code=403, detail="Network ID is not owned by an active master or second master user")
     existing = db.query(Device).filter(Device.zerotier_node_id == req.zerotier_node_id).first()
-    
-    if not existing and req.wg_public_key:
-        existing = db.query(Device).filter(Device.wg_public_key == req.wg_public_key).first()
-        
     if existing:
         if existing.tenant_id != tenant.id:
             db.delete(existing)
             db.flush()
-            existing = None
         else:
-            if req.zerotier_node_id and not existing.zerotier_node_id:
-                existing.zerotier_node_id = req.zerotier_node_id
-            if req.network_id and not existing.network_id:
-                existing.network_id = req.network_id
-            if req.zerotier_ip:
-                existing.zerotier_ip = req.zerotier_ip
-            db.commit()
-            return {"message": "Already registered (linked ZT to WG)", "device_id": existing.id}
-
-    if not existing:
-        device = Device(
-            tenant_id=tenant.id,
-            owner_id=owner_user.id,
-            name=req.hostname,
-            zerotier_node_id=req.zerotier_node_id,
-            network_id=req.network_id,
-            zerotier_ip=req.zerotier_ip,
-            lan_ip=req.lan_ip,
-            lan_subnet=req.lan_subnet,
-            device_capability=json.dumps(req.device_capability) if hasattr(req, "device_capability") and req.device_capability else None,
-            status=DeviceStatus.pending,
-            is_approved=False,
-        )
-        db.add(device)
+            return {"message": "Already registered", "device_id": existing.id}
+    device = Device(
+        tenant_id=tenant.id,
+        owner_id=owner_user.id,
+        zerotier_node_id=req.zerotier_node_id,
+        network_id=req.network_id,
+        zerotier_ip=req.zerotier_ip,
+        lan_ip=req.lan_ip,
+        lan_subnet=req.lan_subnet,
+        device_capability=json.dumps(req.device_capability) if hasattr(req, "device_capability") and req.device_capability else None,
+        status=DeviceStatus.pending,
+        is_approved=False,
+    )
+    db.add(device)
     db.commit()
     db.refresh(device)
     log(db, "device_registered", f"New device {req.zerotier_node_id} registered (pending approval)",
@@ -417,15 +402,12 @@ async def get_wg_tunnel_peers(
 
 
 @router.post("/{device_id}/approve")
-async def approve_device(device_id: int, current_user: Annotated[User, Depends(require_master_or_above)], db: Annotated[Session, Depends(get_db)], tunnel_type: str = None):
+async def approve_device(device_id: int, current_user: Annotated[User, Depends(require_master_or_above)], db: Annotated[Session, Depends(get_db)]):
     device = db.query(Device).filter(Device.id == device_id, Device.tenant_id == current_user.tenant_id).first()
     if not device:
         raise HTTPException(status_code=404, detail="Device not found")
     if device.is_approved:
         raise HTTPException(status_code=400, detail="Already approved")
-
-    if tunnel_type:
-        device.forced_tunnel_type = tunnel_type
 
     capability = json.loads(device.device_capability or "{}")
     new_tunnel_type = await decide_tunnel_type(capability, device.forced_tunnel_type)
@@ -438,11 +420,11 @@ async def approve_device(device_id: int, current_user: Annotated[User, Depends(r
     if not result.success:
         raise HTTPException(status_code=500, detail=f"Provisioning failed: {result.error}")
 
-    if device.tunnel_type in ("wireguard", "wg_over_zt"):
+    if device.tunnel_type == "wireguard":
         device.wg_ip = result.wg_ip
         device.wg_public_key = result.wg_public_key
         device.wg_private_key = result.wg_private_key
-    if device.tunnel_type in ("zerotier", "wg_over_zt"):
+    elif device.tunnel_type == "zerotier":
         device.network_id = result.network_id
         device.zerotier_node_id = result.zerotier_node_id
 
@@ -560,12 +542,6 @@ async def reprovision_device(
             device.wg_public_key = None
             device.wg_private_key = None
             device.wg_ip = None
-        elif device.tunnel_type == "wg_over_zt":
-            device.wg_ip = result.wg_ip
-            device.wg_public_key = result.wg_public_key
-            device.wg_private_key = result.wg_private_key
-            device.network_id = result.network_id
-            device.zerotier_node_id = result.zerotier_node_id
             
         device.re_provision_requested = False
         db.commit()
@@ -580,8 +556,8 @@ async def get_device_conf(device_id: int, current_user: Annotated[User, Depends(
     device = db.query(Device).filter(Device.id == device_id).first()
     if not device or not _user_can_see(current_user, device, db):
         raise HTTPException(status_code=404, detail="Device not found")
-    if device.tunnel_type not in ("wireguard", "wg_over_zt"):
-        raise HTTPException(403, "Not a WireGuard or wg_over_zt device")
+    if device.tunnel_type != "wireguard":
+        raise HTTPException(403, "Not a WireGuard device")
     # private key might be absent if device registered its own public key
     
     from config import get_settings
@@ -594,10 +570,7 @@ async def get_device_conf(device_id: int, current_user: Annotated[User, Depends(
     else:
         server_pubkey = ""
         
-    if device.tunnel_type == "wg_over_zt" and tenant and tenant.wg_server_endpoint_secondary:
-        server_endpoint = tenant.wg_server_endpoint_secondary
-    else:
-        server_endpoint = tenant.wg_server_endpoint if tenant and tenant.wg_server_endpoint else getattr(settings, "WG_SERVER_ENDPOINT", "127.0.0.1:51820")
+    server_endpoint = tenant.wg_server_endpoint if tenant and tenant.wg_server_endpoint else getattr(settings, "WG_SERVER_ENDPOINT", "127.0.0.1:51820")
     
     conf = wireguard_controller.generate_client_config(
         private_key=device.wg_private_key,
@@ -707,16 +680,16 @@ async def change_network_mode(
 
 
 def _device_dict(d: Device, hide_network: bool = False) -> dict:
-    virtual_ip = d.wg_ip if d.tunnel_type in ("wireguard", "wg_over_zt") else d.zerotier_ip
-    conf_url = f"/api/devices/{d.id}/conf" if d.tunnel_type in ("wireguard", "wg_over_zt") else None
+    virtual_ip = d.wg_ip if d.tunnel_type == "wireguard" else d.zerotier_ip
+    conf_url = f"/api/devices/{d.id}/conf" if d.tunnel_type == "wireguard" else None
     
     connection_info = {
         "tunnel_type": d.tunnel_type or "unknown",
         "virtual_ip": virtual_ip,
         "status": d.status.value if hasattr(d.status, "value") else str(d.status),
         "conf_download_url": conf_url,
-        "network_id": d.network_id if d.tunnel_type in ("zerotier", "wg_over_zt") else None,
-        "node_id": d.zerotier_node_id if d.tunnel_type in ("zerotier", "wg_over_zt") else None,
+        "network_id": d.network_id if d.tunnel_type == "zerotier" else None,
+        "node_id": d.zerotier_node_id if d.tunnel_type == "zerotier" else None,
     }
     
     from sqlalchemy.orm import object_session

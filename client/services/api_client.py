@@ -218,11 +218,8 @@ class APIClient:
     def get_pending_devices(self) -> list:
         return self._req("GET", "/api/devices/pending")
 
-    def approve_device(self, device_id: int, tunnel_type: str = None) -> dict:
-        url = f"/api/devices/{device_id}/approve"
-        if tunnel_type:
-            url += f"?tunnel_type={tunnel_type}"
-        return self._req("POST", url)
+    def approve_device(self, device_id: int) -> dict:
+        return self._req("POST", f"/api/devices/{device_id}/approve")
 
     # pyrefly: ignore [bad-function-definition]
     def remove_device(self, device_id: int, totp_code: str = None) -> dict:
@@ -336,10 +333,8 @@ class APIClient:
 
     # ── Devices ───────────────────────────────────────────────────
     # pyrefly: ignore [bad-function-definition]
-    def register_device(self, node_id: str, network_id: str, zt_ip: str = None, lan_ip: str = None, hostname: str = "Unknown Device", lan_subnet: str = None, wg_public_key: str = None) -> dict:
+    def register_device(self, node_id: str, network_id: str, zt_ip: str = None, lan_ip: str = None, hostname: str = "Unknown Device", lan_subnet: str = None) -> dict:
         body = {"zerotier_node_id": node_id, "network_id": network_id, "hostname": hostname}
-        if wg_public_key:
-            body["wg_public_key"] = wg_public_key
         if zt_ip:
             body["zerotier_ip"] = zt_ip
         if lan_ip:
