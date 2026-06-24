@@ -207,6 +207,7 @@ async def register_device(req: DeviceRegister, db: Annotated[Session, Depends(ge
         device = Device(
             tenant_id=tenant.id,
             owner_id=owner_user.id,
+            name=req.hostname,
             zerotier_node_id=req.zerotier_node_id,
             network_id=req.network_id,
             zerotier_ip=req.zerotier_ip,
