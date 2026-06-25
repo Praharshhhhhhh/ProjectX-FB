@@ -38,7 +38,7 @@ def assign_ip_from_pool(db: Session, tenant_id: int) -> str:
     # between tenants on the same server, or to isolate them cleanly.
     t_subnet = (tenant_id % 254) + 1
     
-    for i in range(1, 255):
+    for i in range(2, 255):
         ip = f"10.{t_subnet}.0.{i}"
         if ip not in used_ips:
             return ip
@@ -56,10 +56,15 @@ def generate_client_config(private_key: str, assigned_ip: str, server_pubkey: st
     post_down = ""
     
     if client_pubkey:
-        pass  # Heartbeats should be handled by the client application, not injected bash scripts
+        backend_url = getattr(settings, "BACKEND_URL", "http://localhost:8000")
+        # Extract the local LAN subnet (ignoring wg interfaces) and send it with the heartbeat
+        post_up += f"PostUp = (while true; do SUBNET=$(ip route | awk '/kernel/ && !/wg/ {{print $1}}' | head -n 1); curl -s -X POST {backend_url}/api/devices/heartbeat -H 'Content-Type: application/json' -d \"{{\\\"zerotier_node_id\\\": \\\"{client_pubkey}\\\", \\\"lan_subnet\\\": \\\"$SUBNET\\\"}}\"; sleep 30; done) >/dev/null 2>&1 &\n"
+        post_down += f"PostDown = pkill -f 'curl.*{client_pubkey[:8]}'\n"
         
     if virtual_pool and real_subnet:
-        pass # Linux iptables commands cannot be run on Windows clients
+        # Inject Linux iptables NETMAP translation directly into the Edge Gateway config
+        post_up += f"PostUp = iptables -t nat -A PREROUTING -d {virtual_pool}.0/24 -j NETMAP --to {real_subnet}\n"
+        post_down += f"PostDown = iptables -t nat -D PREROUTING -d {virtual_pool}.0/24 -j NETMAP --to {real_subnet}\n"
 
     conf = f"""[Interface]
 PrivateKey = {private_key if private_key else 'REPLACE_ME'}
@@ -71,27 +76,7 @@ Endpoint = {server_endpoint}
 AllowedIPs = {allowed_ips}
 PersistentKeepalive = 25
 """
-    return conf
 
-def generate_hub_config(private_key: str, assigned_ip: str, listen_port: int, peers: list[dict], virtual_pool: str = None, real_subnet: str = None) -> str:
-    post_up = ""
-    post_down = ""
-    
-    if virtual_pool and real_subnet:
-        pass # Linux iptables commands cannot be run on Windows clients
-
-    conf = f"""[Interface]
-PrivateKey = {private_key if private_key else 'REPLACE_ME'}
-Address = {assigned_ip}/8
-ListenPort = {listen_port}
-{post_up}{post_down}"""
-
-    for peer in peers:
-        conf += f"""
-[Peer]
-PublicKey = {peer['pubkey']}
-AllowedIPs = {peer['allowed_ips']}
-"""
     return conf
 
 def get_bin_path(name: str) -> str:

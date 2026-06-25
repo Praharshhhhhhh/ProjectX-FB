@@ -118,15 +118,6 @@ def connect(config_name_or_path: str) -> bool:
         
     return _run_with_elevation_fallback(cmd)
 
-def sync_config(config_name_or_path: str) -> bool:
-    name = os.path.basename(config_name_or_path).replace(".conf", "")
-    path = config_name_or_path
-    if not path.endswith(".conf"):
-        path = os.path.join(WG_CONFIG_DIR, f"{config_name_or_path}.conf")
-        
-    cmd = [WG_CMD, "syncconf", name, path]
-    return _run_with_elevation_fallback(cmd)
-
 def disconnect(config_name: str) -> bool:
     if sys.platform == "win32":
         name = os.path.basename(config_name).replace(".conf", "")

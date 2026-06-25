@@ -2144,16 +2144,10 @@ class MainWindow(QMainWindow):
         if not hasattr(self, 'tunnel_status_lbl'):
             return
         tun_name = "WireGuard" if TUNNEL_MODE == "wireguard" else "ZeroTier"
-        
-        self._tun_w = Worker(is_tunnel_running)
-        def on_res(is_running):
-            if not hasattr(self, 'tunnel_status_lbl'): return
-            self.tunnel_status_lbl.setText(f"● {tun_name} Active" if is_running else f"○ {tun_name} Inactive")
-            color = "#4ade80" if is_running else "#f87171"
-            self.tunnel_status_lbl.setStyleSheet(f"color:{color};font-size:12px;padding:8px 18px")
-            
-        self._tun_w.result.connect(on_res)
-        self._tun_w.start()
+        is_running = is_tunnel_running()
+        self.tunnel_status_lbl.setText(f"● {tun_name} Active" if is_running else f"○ {tun_name} Inactive")
+        color = "#4ade80" if is_running else "#f87171"
+        self.tunnel_status_lbl.setStyleSheet(f"color:{color};font-size:12px;padding:8px 18px")
 
     def _build(self):
         root = QWidget(); root.setObjectName("root")

@@ -118,8 +118,6 @@ async def _handle_subnet_overlap(device: Device, db: Session):
 
 
 def _user_can_see(user: User, device: Device, db: Session) -> bool:
-    if user.id == device.owner_id:
-        return True
     if user.role in (UserRole.master, UserRole.second_master):
         if device.tenant_id == user.tenant_id:
             return True
@@ -232,15 +230,15 @@ async def register_wg_device(req: WgDeviceRegister, current_user: Annotated[User
                 db.flush()
                 existing = None
             else:
-                config_str = _generate_device_config(existing, db)
+                config_str = wireguard_controller.generate_client_config("", existing.wg_ip, server_pubkey, server_endpoint, client_pubkey=existing.wg_public_key)
+                wireguard_controller.sync_peer_to_vps(existing.wg_public_key, existing.wg_ip)
                 return {
                     "assigned_ip": existing.wg_ip,
-                    "server_pubkey": "",
-                    "server_endpoint": "",
-                    "server_endpoint_secondary": "",
+                    "server_pubkey": server_pubkey,
+                    "server_endpoint": server_endpoint,
+                    "server_endpoint_secondary": server_endpoint_secondary,
                     "config": config_str,
-                    "private_key": existing.wg_private_key or "",
-                    "device_id": existing.id
+                    "private_key": ""
                 }
 
     priv_key = ""
@@ -253,11 +251,13 @@ async def register_wg_device(req: WgDeviceRegister, current_user: Annotated[User
 
     assigned_ip = wireguard_controller.assign_ip_from_pool(db, current_user.tenant_id)
     
+    config_str = wireguard_controller.generate_client_config(priv_key, assigned_ip, server_pubkey, server_endpoint, client_pubkey=pub_key)
+    wireguard_controller.sync_peer_to_vps(pub_key, assigned_ip)
+    
     device = Device(
         tenant_id=current_user.tenant_id,
         owner_id=current_user.id,
         wg_public_key=pub_key,
-        wg_private_key=priv_key,
         wg_ip=assigned_ip,
         lan_ip=req.lan_ip,
         name=req.hostname,
@@ -273,16 +273,14 @@ async def register_wg_device(req: WgDeviceRegister, current_user: Annotated[User
     
     await manager.broadcast_to_tenant(current_user.tenant_id, {"event": "device_updated", "device": _device_dict(device)})
     
-    config_str = _generate_device_config(device, db)
-    
     return {
         "assigned_ip": assigned_ip,
-        "server_pubkey": "",
-        "server_endpoint": "",
-        "server_endpoint_secondary": "",
+        "server_pubkey": server_pubkey,
+        "server_endpoint": server_endpoint,
+        "server_endpoint_secondary": server_endpoint_secondary,
         "config": config_str,
         "private_key": priv_key,
-        "device_id": device.id
+        "device_id": device.id if 'device' in locals() else existing.id
     }
 
 
@@ -556,54 +554,6 @@ async def reprovision_device(
         
     return {"message": "Reprovisioned"}
 
-def _generate_device_config(device: Device, db: Session) -> str:
-    owner = db.query(User).filter(User.id == device.owner_id).first()
-    is_master = owner and owner.role in (UserRole.master, UserRole.second_master)
-    
-    if is_master:
-        peers = []
-        other_devices = db.query(Device).filter(
-            Device.tenant_id == device.tenant_id,
-            Device.tunnel_type == "wireguard",
-            Device.is_approved == True,
-            Device.id != device.id
-        ).all()
-        for od in other_devices:
-            if od.wg_public_key and od.wg_ip:
-                peers.append({
-                    "pubkey": od.wg_public_key,
-                    "allowed_ips": f"{od.wg_ip}/32"
-                })
-        conf = wireguard_controller.generate_hub_config(
-            private_key=device.wg_private_key or "",
-            assigned_ip=device.wg_ip,
-            listen_port=51820,
-            peers=peers,
-            virtual_pool=device.nat_virtual_pool,
-            real_subnet=device.lan_subnet
-        )
-    else:
-        master_device = db.query(Device).join(User, Device.owner_id == User.id).filter(
-            Device.tenant_id == device.tenant_id,
-            User.role.in_([UserRole.master, UserRole.second_master]),
-            Device.tunnel_type == "wireguard",
-            Device.is_approved == True
-        ).first()
-        
-        server_pubkey = master_device.wg_public_key if master_device else ""
-        server_endpoint = f"{master_device.lan_ip}:51820" if master_device and master_device.lan_ip else "127.0.0.1:51820"
-        
-        conf = wireguard_controller.generate_client_config(
-            private_key=device.wg_private_key or "",
-            assigned_ip=device.wg_ip,
-            server_pubkey=server_pubkey,
-            server_endpoint=server_endpoint,
-            virtual_pool=device.nat_virtual_pool,
-            real_subnet=device.lan_subnet,
-            client_pubkey=device.wg_public_key
-        )
-    return conf
-
 @router.get("/{device_id}/conf", response_class=PlainTextResponse)
 async def get_device_conf(device_id: int, current_user: Annotated[User, Depends(get_current_user)], db: Annotated[Session, Depends(get_db)]):
     device = db.query(Device).filter(Device.id == device_id).first()
@@ -611,9 +561,24 @@ async def get_device_conf(device_id: int, current_user: Annotated[User, Depends(
         raise HTTPException(status_code=404, detail="Device not found")
     if device.tunnel_type != "wireguard":
         raise HTTPException(403, "Not a WireGuard device")
+    # private key might be absent if device registered its own public key
     
-    conf = _generate_device_config(device, db)
-        
+    from config import get_settings
+    settings = get_settings()
+    tenant = db.query(Tenant).filter(Tenant.id == device.tenant_id).first()
+    
+    server_pubkey = getattr(settings, "WG_SERVER_PUBLIC_KEY", "")
+    server_endpoint = getattr(settings, "WG_SERVER_ENDPOINT", "127.0.0.1:51820")
+    
+    conf = wireguard_controller.generate_client_config(
+        private_key=device.wg_private_key,
+        assigned_ip=device.wg_ip,
+        server_pubkey=server_pubkey,
+        server_endpoint=server_endpoint,
+        virtual_pool=device.nat_virtual_pool,
+        real_subnet=device.lan_subnet,
+        client_pubkey=device.wg_public_key
+    )
     return Response(content=conf, media_type="text/plain",
         headers={"Content-Disposition": f'attachment; filename="{device.name}.conf"'})
 
