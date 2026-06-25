@@ -214,6 +214,9 @@ async def register_device(req: DeviceRegister, db: Annotated[Session, Depends(ge
 
 @router.post("/wg-register")
 async def register_wg_device(req: WgDeviceRegister, current_user: Annotated[User, Depends(get_current_user)], db: Annotated[Session, Depends(get_db)]):
+    if current_user.tenant_id is None:
+        raise HTTPException(status_code=400, detail="System owner cannot register a WireGuard device directly without a tenant. Please use an activation key for a specific tenant.")
+
     from models import Tenant
     tenant = db.query(Tenant).filter(Tenant.id == current_user.tenant_id).first()
     from config import get_settings
