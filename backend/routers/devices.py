@@ -118,10 +118,10 @@ async def _handle_subnet_overlap(device: Device, db: Session):
 
 
 def _user_can_see(user: User, device: Device, db: Session) -> bool:
-    if user.role in (UserRole.master, UserRole.second_master):
+    if user.role in (UserRole.system_owner, UserRole.master, UserRole.second_master):
         if device.tenant_id == user.tenant_id:
             return True
-    if user.is_trusted or user.role == UserRole.trusted:
+    if user.is_trusted or user.role in (UserRole.trusted, UserRole.admin):
         if device.tenant_id == user.tenant_id and device.is_approved:
             return True
             
@@ -129,8 +129,6 @@ def _user_can_see(user: User, device: Device, db: Session) -> bool:
     if access is not None:
         return True
         
-    # Check if device is shared to user's tenant
-    # pyrefly: ignore [missing-import]
     from models.device_share import DeviceShare
     share = db.query(DeviceShare).filter_by(device_id=device.id, target_tenant_id=user.tenant_id).first()
     if share is not None:
@@ -283,8 +281,8 @@ async def register_wg_device(req: WgDeviceRegister, current_user: Annotated[User
                 
                 return {
                     "assigned_ip": existing.wg_ip,
-                    "server_pubkey": server_pubkey,
-                    "server_endpoint": server_endpoint,
+                    "server_pubkey": srv_pubkey if not is_master else server_pubkey,
+                    "server_endpoint": srv_endpoint if not is_master else server_endpoint,
                     "server_endpoint_secondary": server_endpoint_secondary,
                     "config": config_str,
                     "private_key": "",
@@ -523,6 +521,10 @@ async def remove_device(device_id: int, current_user: Annotated[User, Depends(re
     if not device:
         raise HTTPException(status_code=404, detail="Device not found")
         
+    owner = db.query(User).filter(User.id == device.owner_id).first()
+    if owner and owner.role in (UserRole.master, UserRole.second_master):
+        raise HTTPException(status_code=403, detail="Cannot remove the Master Hub device")
+        
     await deprovision_device(device)
     await remove_iptables_nat_rule(device.id)
     
@@ -686,6 +688,10 @@ async def sync_device_toggle(
     device = db.query(Device).filter(Device.id == device_id).first()
     if not device or not _user_can_see(current_user, device, db):
         raise HTTPException(status_code=404, detail="Device not found or unauthorized")
+        
+    owner = db.query(User).filter(User.id == device.owner_id).first()
+    if owner and owner.role in (UserRole.master, UserRole.second_master):
+        raise HTTPException(status_code=403, detail="Cannot toggle the Master Hub remotely")
         
     device.status = DeviceStatus.connecting if req.connect else DeviceStatus.offline
     db.commit()
