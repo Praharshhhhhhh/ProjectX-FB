@@ -65,6 +65,8 @@ async def get_tunnel_status(device: Device) -> str:
 
 async def _provision_wireguard(device: Device, db: Session) -> ProvisionResult:
     try:
+        from models import User, UserRole
+        
         wg_ip = device.wg_ip
         if not wg_ip:
             wg_ip = wireguard_controller.assign_ip_from_pool(db, device.tenant_id)
@@ -79,24 +81,55 @@ async def _provision_wireguard(device: Device, db: Session) -> ProvisionResult:
             device.wg_private_key = priv_key
             device.wg_public_key = pub_key
         
-        tenant = device.tenant
-        tenant_interface = tenant.wg_server_interface if tenant else "wg0"
-        # Peer addition is synced via websocket to the hub
+        owner = db.query(User).filter(User.id == device.owner_id).first()
+        is_master = owner and owner.role in (UserRole.master, UserRole.second_master)
         
-        from config import get_settings
-        settings = get_settings()
-        
-        server_pubkey = tenant.wg_server_public_key if tenant and tenant.wg_server_public_key else ""
-        server_endpoint = tenant.wg_server_endpoint if tenant and tenant.wg_server_endpoint else getattr(settings, "WG_SERVER_ENDPOINT", "127.0.0.1:51820")
-        
-        conf = wireguard_controller.generate_client_config(
-            private_key=priv_key,
-            assigned_ip=wg_ip,
-            server_pubkey=server_pubkey,
-            server_endpoint=server_endpoint,
-            client_pubkey=pub_key
-        )
-        
+        if is_master:
+            # Generate Hub Config
+            peers = []
+            other_devices = db.query(Device).filter(
+                Device.tenant_id == device.tenant_id,
+                Device.tunnel_type == "wireguard",
+                Device.is_approved == True,
+                Device.id != device.id
+            ).all()
+            for od in other_devices:
+                if od.wg_public_key and od.wg_ip:
+                    peers.append({
+                        "pubkey": od.wg_public_key,
+                        "allowed_ips": f"{od.wg_ip}/32"
+                    })
+            conf = wireguard_controller.generate_hub_config(
+                private_key=priv_key,
+                assigned_ip=wg_ip,
+                listen_port=51820,
+                peers=peers
+            )
+        else:
+            # Generate Client Config
+            master_device = db.query(Device).join(User, Device.owner_id == User.id).filter(
+                Device.tenant_id == device.tenant_id,
+                User.role.in_([UserRole.master, UserRole.second_master]),
+                Device.tunnel_type == "wireguard",
+                Device.is_approved == True
+            ).first()
+            
+            if master_device:
+                server_pubkey = master_device.wg_public_key or ""
+                server_endpoint = f"{master_device.lan_ip}:51820" if master_device.lan_ip else "127.0.0.1:51820"
+            else:
+                # Fallback if no master device is set up yet
+                server_pubkey = ""
+                server_endpoint = "127.0.0.1:51820"
+                
+            conf = wireguard_controller.generate_client_config(
+                private_key=priv_key,
+                assigned_ip=wg_ip,
+                server_pubkey=server_pubkey,
+                server_endpoint=server_endpoint,
+                client_pubkey=pub_key
+            )
+            
         return ProvisionResult(
             success=True, 
             tunnel_type="wireguard", 

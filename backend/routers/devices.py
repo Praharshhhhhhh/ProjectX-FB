@@ -561,24 +561,53 @@ async def get_device_conf(device_id: int, current_user: Annotated[User, Depends(
         raise HTTPException(status_code=404, detail="Device not found")
     if device.tunnel_type != "wireguard":
         raise HTTPException(403, "Not a WireGuard device")
-    # private key might be absent if device registered its own public key
     
-    from config import get_settings
-    settings = get_settings()
-    tenant = db.query(Tenant).filter(Tenant.id == device.tenant_id).first()
+    owner = db.query(User).filter(User.id == device.owner_id).first()
+    is_master = owner and owner.role in (UserRole.master, UserRole.second_master)
     
-    server_pubkey = getattr(settings, "WG_SERVER_PUBLIC_KEY", "")
-    server_endpoint = getattr(settings, "WG_SERVER_ENDPOINT", "127.0.0.1:51820")
-    
-    conf = wireguard_controller.generate_client_config(
-        private_key=device.wg_private_key,
-        assigned_ip=device.wg_ip,
-        server_pubkey=server_pubkey,
-        server_endpoint=server_endpoint,
-        virtual_pool=device.nat_virtual_pool,
-        real_subnet=device.lan_subnet,
-        client_pubkey=device.wg_public_key
-    )
+    if is_master:
+        peers = []
+        other_devices = db.query(Device).filter(
+            Device.tenant_id == device.tenant_id,
+            Device.tunnel_type == "wireguard",
+            Device.is_approved == True,
+            Device.id != device.id
+        ).all()
+        for od in other_devices:
+            if od.wg_public_key and od.wg_ip:
+                peers.append({
+                    "pubkey": od.wg_public_key,
+                    "allowed_ips": f"{od.wg_ip}/32"
+                })
+        conf = wireguard_controller.generate_hub_config(
+            private_key=device.wg_private_key,
+            assigned_ip=device.wg_ip,
+            listen_port=51820,
+            peers=peers,
+            virtual_pool=device.nat_virtual_pool,
+            real_subnet=device.lan_subnet
+        )
+    else:
+        master_device = db.query(Device).join(User, Device.owner_id == User.id).filter(
+            Device.tenant_id == device.tenant_id,
+            User.role.in_([UserRole.master, UserRole.second_master]),
+            Device.tunnel_type == "wireguard",
+            Device.is_approved == True
+        ).first()
+        
+        server_pubkey = master_device.wg_public_key if master_device else ""
+        server_endpoint = f"{master_device.lan_ip}:51820" if master_device and master_device.lan_ip else "127.0.0.1:51820"
+        
+        conf = wireguard_controller.generate_client_config(
+            private_key=device.wg_private_key,
+            assigned_ip=device.wg_ip,
+            server_pubkey=server_pubkey,
+            server_endpoint=server_endpoint,
+            virtual_pool=device.nat_virtual_pool,
+            real_subnet=device.lan_subnet,
+            client_pubkey=device.wg_public_key
+        )
+        
     return Response(content=conf, media_type="text/plain",
         headers={"Content-Disposition": f'attachment; filename="{device.name}.conf"'})
 

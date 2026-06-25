@@ -76,7 +76,28 @@ Endpoint = {server_endpoint}
 AllowedIPs = {allowed_ips}
 PersistentKeepalive = 25
 """
+    return conf
 
+def generate_hub_config(private_key: str, assigned_ip: str, listen_port: int, peers: list[dict], virtual_pool: str = None, real_subnet: str = None) -> str:
+    post_up = ""
+    post_down = ""
+    
+    if virtual_pool and real_subnet:
+        post_up += f"PostUp = iptables -t nat -A PREROUTING -d {virtual_pool}.0/24 -j NETMAP --to {real_subnet}\n"
+        post_down += f"PostDown = iptables -t nat -D PREROUTING -d {virtual_pool}.0/24 -j NETMAP --to {real_subnet}\n"
+
+    conf = f"""[Interface]
+PrivateKey = {private_key if private_key else 'REPLACE_ME'}
+Address = {assigned_ip}/8
+ListenPort = {listen_port}
+{post_up}{post_down}"""
+
+    for peer in peers:
+        conf += f"""
+[Peer]
+PublicKey = {peer['pubkey']}
+AllowedIPs = {peer['allowed_ips']}
+"""
     return conf
 
 def get_bin_path(name: str) -> str:

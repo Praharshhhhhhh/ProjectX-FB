@@ -119,7 +119,21 @@ class App:
         self.root.set_view(self._claim)
 
     def _on_mesh_updated(self, *args):
-        pass
+        from config import TUNNEL_MODE
+        if TUNNEL_MODE == "wireguard" and getattr(self, "_device_id", None):
+            import os
+            from config import WG_CONFIG_DIR, WG_INTERFACE
+            from services import wireguard_local as tunnel
+            
+            try:
+                conf_data = api.download_conf(self._device_id)
+                if conf_data:
+                    config_path = os.path.join(WG_CONFIG_DIR, f"{WG_INTERFACE}.conf")
+                    with open(config_path, "w") as f:
+                        f.write(conf_data)
+                    tunnel.sync_config(config_path)
+            except Exception as e:
+                print(f"Failed to sync mesh update: {e}")
     
 
     # ── Main portal ───────────────────────────────────────────────
@@ -166,7 +180,7 @@ class App:
                     server_endpoint = res.get("server_endpoint")
                     server_endpoint_secondary = res.get("server_endpoint_secondary")
                     priv = res.get("private_key") or existing_priv
-                    device_id = res.get("device_id")
+                    self._device_id = res.get("device_id")
                     
                     if server_pubkey and assigned_ip and priv:
                         import os
