@@ -162,162 +162,166 @@ class App:
             import socket
             import time
 
-            if TUNNEL_MODE == "wireguard":
-                # Always register with backend to ensure config and tenant are in sync
-                try:
-                    # pyrefly: ignore [missing-import]
-                    from services.network_monitor import _get_active_interface
-                    lan_ip = _get_active_interface()
-                    existing_priv, existing_pub = tunnel.get_or_create_keypair()
-                    req_data = {
-                        "hostname": socket.gethostname(),
-                        "lan_ip": lan_ip
-                    }
-                    if existing_pub:
-                        req_data["wg_public_key"] = existing_pub
-                        
-                    res = api._req("POST", "/api/devices/wg-register", json=req_data)
-                    config_str = res.get("config")
-                    assigned_ip = res.get("assigned_ip")
-                    server_pubkey = res.get("server_pubkey")
-                    server_endpoint = res.get("server_endpoint")
-                    server_endpoint_secondary = res.get("server_endpoint_secondary")
-                    priv = res.get("private_key") or existing_priv
-                    self._device_id = res.get("device_id")
-                    
-                    if config_str:
-                        import os
-                        # pyrefly: ignore [missing-import]
-                        from config import WG_CONFIG_DIR, WG_INTERFACE
-                        config_path = os.path.join(WG_CONFIG_DIR, f"{WG_INTERFACE}.conf")
-                        
-                        was_running = tunnel.is_wireguard_running()
-                        
-                        listen_port = 51820
-                        pub_ip, pub_port = tunnel.discover_stun(listen_port)
-                        if pub_ip and pub_port:
-                            print(f"STUN Discovered Endpoint: {pub_ip}:{pub_port}")
-                            # WireGuard handles endpoint updating automatically via incoming packets + PersistentKeepalive
-                        # Inject the private key into the config string if the backend didn't have it
-                        if priv:
-                            config_str = config_str.replace("REPLACE_ME", priv)
-                            
-                        # Use the config returned by the server directly
-                        os.makedirs(os.path.dirname(config_path), exist_ok=True)
-                        config_changed = False
-                        if os.path.exists(config_path):
-                            with open(config_path, "r") as f:
-                                if f.read() != config_str:
-                                    config_changed = True
-                        else:
-                            config_changed = True
-                            
-                        if config_changed:
-                            with open(config_path, "w") as f:
-                                f.write(config_str)
-                        
-                        import json
-                        failover_path = os.path.join(WG_CONFIG_DIR, "failover.json")
-                        if server_endpoint_secondary:
-                            with open(failover_path, "w") as f:
-                                json.dump({
-                                    "primary": server_endpoint,
-                                    "secondary": server_endpoint_secondary,
-                                    "current": "primary",
-                                    "priv": priv,
-                                    "assigned_ip": assigned_ip,
-                                    "server_pubkey": server_pubkey
-                                }, f)
-                        else:
-                            if os.path.exists(failover_path):
-                                os.remove(failover_path)
-
-                        if config_changed:
-                            if was_running:
-                                tunnel.disconnect(WG_INTERFACE)
-                            tunnel.connect(WG_INTERFACE)
-                        elif not was_running:
-                            tunnel.connect(WG_INTERFACE)
-                    else:
-                        print("WireGuard registration error: Backend did not return valid details. (Is the wg0 interface running on the server?)")
-                except Exception as e:
-                    print("WireGuard registration failed:", e)
-    
-                priv, pub = tunnel.get_or_create_keypair()
-                node_id = pub
-            else:
-                if tunnel.is_zerotier_running():
-                    node_info = tunnel.get_node_info()
-                    node_id = node_info.get("address")
-                else:
-                    node_id = None
-    
-            if node_id:
-                def _do_heartbeat():
+            def _background_setup():
+                assigned_ip = None
+                if TUNNEL_MODE == "wireguard":
+                    # Always register with backend to ensure config and tenant are in sync
                     try:
-                        tun_ip = tunnel.get_network_ip(network_id) if not TUNNEL_MODE == "wireguard" else ""
-                        if TUNNEL_MODE != "wireguard":
-                            api.register_device(node_id, network_id, zt_ip=tun_ip, hostname=socket.gethostname())
-                    except Exception:
-                        pass
-                    while True:
-                        try:
+                        # pyrefly: ignore [missing-import]
+                        from services.network_monitor import _get_active_interface
+                        lan_ip = _get_active_interface()
+                        existing_priv, existing_pub = tunnel.get_or_create_keypair()
+                        req_data = {
+                            "hostname": socket.gethostname(),
+                            "lan_ip": lan_ip
+                        }
+                        if existing_pub:
+                            req_data["wg_public_key"] = existing_pub
+                            
+                        res = api._req("POST", "/api/devices/wg-register", json=req_data)
+                        config_str = res.get("config")
+                        assigned_ip = res.get("assigned_ip")
+                        server_pubkey = res.get("server_pubkey")
+                        server_endpoint = res.get("server_endpoint")
+                        server_endpoint_secondary = res.get("server_endpoint_secondary")
+                        priv = res.get("private_key") or existing_priv
+                        self._device_id = res.get("device_id")
+                        
+                        if config_str:
+                            import os
                             # pyrefly: ignore [missing-import]
-                            from services.network_monitor import _get_active_interface
-                            lan_ip = _get_active_interface()
+                            from config import WG_CONFIG_DIR, WG_INTERFACE
+                            config_path = os.path.join(WG_CONFIG_DIR, f"{WG_INTERFACE}.conf")
                             
-                            if TUNNEL_MODE == "wireguard":
-                                # pyrefly: ignore [missing-import]
-                                from config import WG_INTERFACE
-                                target_id = WG_INTERFACE
-                            else:
-                                target_id = network_id
-    
-                            tun_ip = tunnel.get_network_ip(target_id)
-                            tun_status = tunnel.get_status(target_id)
+                            was_running = tunnel.is_wireguard_running()
                             
-                            if tun_status == "disconnected" and TUNNEL_MODE == "wireguard":
-                                import os, json
-                                from config import WG_CONFIG_DIR, WG_INTERFACE
-                                failover_path = os.path.join(WG_CONFIG_DIR, "failover.json")
-                                if os.path.exists(failover_path):
-                                    with open(failover_path, "r") as f:
-                                        fdata = json.load(f)
-                                    
-                                    new_target = "secondary" if fdata.get("current") == "primary" else "primary"
-                                    ep = fdata.get(new_target)
-                                    if ep:
-                                        fdata["current"] = new_target
-                                        with open(failover_path, "w") as f:
-                                            json.dump(fdata, f)
-                                            
-                                        config_path = os.path.join(WG_CONFIG_DIR, f"{WG_INTERFACE}.conf")
-                                        tunnel.write_config(fdata["priv"], fdata["assigned_ip"], fdata["server_pubkey"], ep, config_path)
-                                        tunnel.disconnect(WG_INTERFACE)
-                                        tunnel.connect(WG_INTERFACE, assigned_ip)
-    
-                            if tun_status == "connected":
-                                import ipaddress
-                                lan_subnet = None
-                                if lan_ip:
-                                    try:
-                                        lan_subnet = str(ipaddress.ip_network(f"{lan_ip}/24", strict=False))
-                                    except Exception:
-                                        pass
+                            listen_port = 51820
+                            pub_ip, pub_port = tunnel.discover_stun(listen_port)
+                            if pub_ip and pub_port:
+                                print(f"STUN Discovered Endpoint: {pub_ip}:{pub_port}")
+                                # WireGuard handles endpoint updating automatically via incoming packets + PersistentKeepalive
+                            # Inject the private key into the config string if the backend didn't have it
+                            if priv:
+                                config_str = config_str.replace("REPLACE_ME", priv)
                                 
-                                api.send_heartbeat(
-                                    node_id=node_id,
-                                    network_id=network_id,
-                                    zt_ip=tun_ip,
-                                    lan_ip=lan_ip,
-                                    hostname=socket.gethostname(),
-                                    lan_subnet=lan_subnet
-                                )
+                            # Use the config returned by the server directly
+                            os.makedirs(os.path.dirname(config_path), exist_ok=True)
+                            config_changed = False
+                            if os.path.exists(config_path):
+                                with open(config_path, "r") as f:
+                                    if f.read() != config_str:
+                                        config_changed = True
+                            else:
+                                config_changed = True
+                                
+                            if config_changed:
+                                with open(config_path, "w") as f:
+                                    f.write(config_str)
                             
+                            import json
+                            failover_path = os.path.join(WG_CONFIG_DIR, "failover.json")
+                            if server_endpoint_secondary:
+                                with open(failover_path, "w") as f:
+                                    json.dump({
+                                        "primary": server_endpoint,
+                                        "secondary": server_endpoint_secondary,
+                                        "current": "primary",
+                                        "priv": priv,
+                                        "assigned_ip": assigned_ip,
+                                        "server_pubkey": server_pubkey
+                                    }, f)
+                            else:
+                                if os.path.exists(failover_path):
+                                    os.remove(failover_path)
+
+                            if config_changed:
+                                if was_running:
+                                    tunnel.disconnect(WG_INTERFACE)
+                                tunnel.connect(WG_INTERFACE)
+                            elif not was_running:
+                                tunnel.connect(WG_INTERFACE)
+                        else:
+                            print("WireGuard registration error: Backend did not return valid details. (Is the wg0 interface running on the server?)")
+                    except Exception as e:
+                        print("WireGuard registration failed:", e)
+        
+                    priv, pub = tunnel.get_or_create_keypair()
+                    node_id = pub
+                else:
+                    if tunnel.is_zerotier_running():
+                        node_info = tunnel.get_node_info()
+                        node_id = node_info.get("address")
+                    else:
+                        node_id = None
+        
+                if node_id:
+                    def _do_heartbeat():
+                        try:
+                            tun_ip = tunnel.get_network_ip(network_id) if not TUNNEL_MODE == "wireguard" else ""
+                            if TUNNEL_MODE != "wireguard":
+                                api.register_device(node_id, network_id, zt_ip=tun_ip, hostname=socket.gethostname())
                         except Exception:
                             pass
-                        time.sleep(5)
-                threading.Thread(target=_do_heartbeat, daemon=True).start()
+                        while True:
+                            try:
+                                # pyrefly: ignore [missing-import]
+                                from services.network_monitor import _get_active_interface
+                                lan_ip = _get_active_interface()
+                                
+                                if TUNNEL_MODE == "wireguard":
+                                    # pyrefly: ignore [missing-import]
+                                    from config import WG_INTERFACE
+                                    target_id = WG_INTERFACE
+                                else:
+                                    target_id = network_id
+        
+                                tun_ip = tunnel.get_network_ip(target_id)
+                                tun_status = tunnel.get_status(target_id)
+                                
+                                if tun_status == "disconnected" and TUNNEL_MODE == "wireguard":
+                                    import os, json
+                                    from config import WG_CONFIG_DIR, WG_INTERFACE
+                                    failover_path = os.path.join(WG_CONFIG_DIR, "failover.json")
+                                    if os.path.exists(failover_path):
+                                        with open(failover_path, "r") as f:
+                                            fdata = json.load(f)
+                                        
+                                        new_target = "secondary" if fdata.get("current") == "primary" else "primary"
+                                        ep = fdata.get(new_target)
+                                        if ep:
+                                            fdata["current"] = new_target
+                                            with open(failover_path, "w") as f:
+                                                json.dump(fdata, f)
+                                                
+                                            config_path = os.path.join(WG_CONFIG_DIR, f"{WG_INTERFACE}.conf")
+                                            tunnel.write_config(fdata["priv"], fdata["assigned_ip"], fdata["server_pubkey"], ep, config_path)
+                                            tunnel.disconnect(WG_INTERFACE)
+                                            tunnel.connect(WG_INTERFACE, assigned_ip)
+        
+                                if tun_status == "connected":
+                                    import ipaddress
+                                    lan_subnet = None
+                                    if lan_ip:
+                                        try:
+                                            lan_subnet = str(ipaddress.ip_network(f"{lan_ip}/24", strict=False))
+                                        except Exception:
+                                            pass
+                                    
+                                    api.send_heartbeat(
+                                        node_id=node_id,
+                                        network_id=network_id,
+                                        zt_ip=tun_ip,
+                                        lan_ip=lan_ip,
+                                        hostname=socket.gethostname(),
+                                        lan_subnet=lan_subnet
+                                    )
+                                
+                            except Exception:
+                                pass
+                            time.sleep(5)
+                    _do_heartbeat()
+
+            threading.Thread(target=_background_setup, daemon=True).start()
 
         role = self._user_info.get("role", "")
         if role == "system_owner":
