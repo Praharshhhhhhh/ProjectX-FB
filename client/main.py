@@ -128,6 +128,9 @@ class App:
             try:
                 conf_data = api.download_conf(self._device_id)
                 if conf_data:
+                    priv, _ = tunnel.get_or_create_keypair()
+                    conf_data = conf_data.replace("REPLACE_ME", priv)
+                    
                     config_path = os.path.join(WG_CONFIG_DIR, f"{WG_INTERFACE}.conf")
                     with open(config_path, "w") as f:
                         f.write(conf_data)
@@ -195,6 +198,9 @@ class App:
                         if pub_ip and pub_port:
                             print(f"STUN Discovered Endpoint: {pub_ip}:{pub_port}")
                             # WireGuard handles endpoint updating automatically via incoming packets + PersistentKeepalive
+                        # Inject the private key into the config string if the backend didn't have it
+                        if priv:
+                            config_str = config_str.replace("REPLACE_ME", priv)
                             
                         # Use the config returned by the server directly
                         os.makedirs(os.path.dirname(config_path), exist_ok=True)

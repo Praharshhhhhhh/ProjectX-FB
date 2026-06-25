@@ -118,6 +118,8 @@ async def _handle_subnet_overlap(device: Device, db: Session):
 
 
 def _user_can_see(user: User, device: Device, db: Session) -> bool:
+    if user.id == device.owner_id:
+        return True
     if user.role in (UserRole.master, UserRole.second_master):
         if device.tenant_id == user.tenant_id:
             return True
