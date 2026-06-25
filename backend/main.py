@@ -31,8 +31,9 @@ async def lifespan(app: FastAPI):
     Base.metadata.create_all(bind=engine)
     _seed_system_owner()
     
-    from services.wireguard_controller import start_hub
-    start_hub()
+    # Deprecated: The backend no longer runs its own VPN Hub
+    # from services.wireguard_controller import start_hub
+    # start_hub()
     
     await _rebuild_wireguard_peers()
     

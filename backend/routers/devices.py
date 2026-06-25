@@ -233,15 +233,62 @@ async def register_wg_device(req: WgDeviceRegister, current_user: Annotated[User
                 db.flush()
                 existing = None
             else:
-                config_str = wireguard_controller.generate_client_config("", existing.wg_ip, server_pubkey, server_endpoint, client_pubkey=existing.wg_public_key)
-                wireguard_controller.sync_peer_to_vps(existing.wg_public_key, existing.wg_ip)
+                if not existing.is_approved:
+                    return {"message": "Registered, awaiting approval", "device_id": existing.id}
+                
+                is_master = current_user.role in (UserRole.master, UserRole.second_master)
+                
+                if is_master:
+                    peers = []
+                    other_devices = db.query(Device).filter(
+                        Device.tenant_id == existing.tenant_id,
+                        Device.tunnel_type == "wireguard",
+                        Device.is_approved == True,
+                        Device.id != existing.id
+                    ).all()
+                    for od in other_devices:
+                        if od.wg_public_key and od.wg_ip:
+                            peers.append({
+                                "pubkey": od.wg_public_key,
+                                "allowed_ips": f"{od.wg_ip}/32"
+                            })
+                    config_str = wireguard_controller.generate_hub_config(
+                        private_key=existing.wg_private_key or "",
+                        assigned_ip=existing.wg_ip,
+                        listen_port=51820,
+                        peers=peers,
+                        virtual_pool=existing.nat_virtual_pool,
+                        real_subnet=existing.lan_subnet
+                    )
+                else:
+                    master_device = db.query(Device).join(User, Device.owner_id == User.id).filter(
+                        Device.tenant_id == existing.tenant_id,
+                        User.role.in_([UserRole.master, UserRole.second_master]),
+                        Device.tunnel_type == "wireguard",
+                        Device.is_approved == True
+                    ).first()
+                    
+                    srv_pubkey = master_device.wg_public_key if master_device else ""
+                    srv_endpoint = f"{master_device.lan_ip}:51820" if master_device and master_device.lan_ip else "127.0.0.1:51820"
+                    
+                    config_str = wireguard_controller.generate_client_config(
+                        private_key=existing.wg_private_key or "",
+                        assigned_ip=existing.wg_ip,
+                        server_pubkey=srv_pubkey,
+                        server_endpoint=srv_endpoint,
+                        virtual_pool=existing.nat_virtual_pool,
+                        real_subnet=existing.lan_subnet,
+                        client_pubkey=existing.wg_public_key
+                    )
+                
                 return {
                     "assigned_ip": existing.wg_ip,
                     "server_pubkey": server_pubkey,
                     "server_endpoint": server_endpoint,
                     "server_endpoint_secondary": server_endpoint_secondary,
                     "config": config_str,
-                    "private_key": ""
+                    "private_key": "",
+                    "device_id": existing.id
                 }
 
     priv_key = ""

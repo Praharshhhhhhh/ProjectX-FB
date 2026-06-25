@@ -39,7 +39,7 @@ def assign_ip_from_pool(db: Session, tenant_id: int) -> str:
     t_id = tenant_id if tenant_id is not None else 0
     t_subnet = (t_id % 254) + 1
     
-    for i in range(2, 255):
+    for i in range(1, 255):
         ip = f"10.{t_subnet}.0.{i}"
         if ip not in used_ips:
             return ip

@@ -128,10 +128,17 @@ class App:
             try:
                 conf_data = api.download_conf(self._device_id)
                 if conf_data:
+                    if "REPLACE_ME" in conf_data:
+                        existing_priv, _ = tunnel.get_or_create_keypair()
+                        conf_data = conf_data.replace("REPLACE_ME", existing_priv)
+                        
                     config_path = os.path.join(WG_CONFIG_DIR, f"{WG_INTERFACE}.conf")
                     with open(config_path, "w") as f:
                         f.write(conf_data)
-                    tunnel.sync_config(config_path)
+                    if tunnel.is_wireguard_running():
+                        tunnel.sync_config(config_path)
+                    else:
+                        tunnel.connect(config_path)
             except Exception as e:
                 print(f"Failed to sync mesh update: {e}")
     
@@ -182,7 +189,7 @@ class App:
                     priv = res.get("private_key") or existing_priv
                     self._device_id = res.get("device_id")
                     
-                    if server_pubkey and assigned_ip and priv:
+                    if config_str and assigned_ip and priv:
                         import os
                         # pyrefly: ignore [missing-import]
                         from config import WG_CONFIG_DIR, WG_INTERFACE
@@ -194,9 +201,19 @@ class App:
                         pub_ip, pub_port = tunnel.discover_stun(listen_port)
                         if pub_ip and pub_port:
                             print(f"STUN Discovered Endpoint: {pub_ip}:{pub_port}")
-                            # WireGuard handles endpoint updating automatically via incoming packets + PersistentKeepalive
                             
-                        config_changed = tunnel.write_config(priv, assigned_ip, server_pubkey, server_endpoint, config_path)
+                        if "REPLACE_ME" in config_str:
+                            config_str = config_str.replace("REPLACE_ME", priv)
+                            
+                        os.makedirs(WG_CONFIG_DIR, exist_ok=True)
+                        old_conf = ""
+                        if os.path.exists(config_path):
+                            with open(config_path, "r") as f:
+                                old_conf = f.read()
+                                
+                        config_changed = old_conf != config_str
+                        with open(config_path, "w") as f:
+                            f.write(config_str)
                         
                         import json
                         failover_path = os.path.join(WG_CONFIG_DIR, "failover.json")
