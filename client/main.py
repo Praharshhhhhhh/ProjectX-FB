@@ -119,7 +119,26 @@ class App:
         self.root.set_view(self._claim)
 
     def _on_mesh_updated(self, *args):
-        pass
+        from config import TUNNEL_MODE
+        # If this PC is the WG server (no client device_id was set), the mesh
+        # update is handled by the server daemon itself — nothing to do here.
+        if TUNNEL_MODE == "wireguard" and getattr(self, "_device_id", None):
+            import os
+            from config import WG_CONFIG_DIR, WG_INTERFACE
+            from services import wireguard_local as tunnel
+            
+            try:
+                conf_data = api.download_conf(self._device_id)
+                if conf_data:
+                    priv, _ = tunnel.get_or_create_keypair()
+                    conf_data = conf_data.replace("REPLACE_ME", priv)
+                    
+                    config_path = os.path.join(WG_CONFIG_DIR, f"{WG_INTERFACE}.conf")
+                    with open(config_path, "w") as f:
+                        f.write(conf_data)
+                    tunnel.sync_config(config_path)
+            except Exception as e:
+                print(f"Failed to sync mesh update: {e}")
     
 
     # ── Main portal ───────────────────────────────────────────────
@@ -146,73 +165,124 @@ class App:
             import time
 
             if TUNNEL_MODE == "wireguard":
-                # Always register with backend to ensure config and tenant are in sync
-                try:
-                    # pyrefly: ignore [missing-import]
-                    from services.network_monitor import _get_active_interface
-                    lan_ip = _get_active_interface()
-                    existing_priv, existing_pub = tunnel.get_or_create_keypair()
-                    req_data = {
-                        "hostname": socket.gethostname(),
-                        "lan_ip": lan_ip
-                    }
-                    if existing_pub:
-                        req_data["wg_public_key"] = existing_pub
-                        
-                    res = api._req("POST", "/api/devices/wg-register", json=req_data)
-                    config_str = res.get("config")
-                    assigned_ip = res.get("assigned_ip")
-                    server_pubkey = res.get("server_pubkey")
-                    server_endpoint = res.get("server_endpoint")
-                    server_endpoint_secondary = res.get("server_endpoint_secondary")
-                    priv = res.get("private_key") or existing_priv
-                    device_id = res.get("device_id")
-                    
-                    if server_pubkey and assigned_ip and priv:
-                        import os
-                        # pyrefly: ignore [missing-import]
-                        from config import WG_CONFIG_DIR, WG_INTERFACE
-                        config_path = os.path.join(WG_CONFIG_DIR, f"{WG_INTERFACE}.conf")
-                        
-                        was_running = tunnel.is_wireguard_running()
-                        
-                        listen_port = 51820
-                        pub_ip, pub_port = tunnel.discover_stun(listen_port)
-                        if pub_ip and pub_port:
-                            print(f"STUN Discovered Endpoint: {pub_ip}:{pub_port}")
-                            # WireGuard handles endpoint updating automatically via incoming packets + PersistentKeepalive
-                            
-                        config_changed = tunnel.write_config(priv, assigned_ip, server_pubkey, server_endpoint, config_path)
-                        
-                        import json
-                        failover_path = os.path.join(WG_CONFIG_DIR, "failover.json")
-                        if server_endpoint_secondary:
-                            with open(failover_path, "w") as f:
-                                json.dump({
-                                    "primary": server_endpoint,
-                                    "secondary": server_endpoint_secondary,
-                                    "current": "primary",
-                                    "priv": priv,
-                                    "assigned_ip": assigned_ip,
-                                    "server_pubkey": server_pubkey
-                                }, f)
-                        else:
-                            if os.path.exists(failover_path):
-                                os.remove(failover_path)
+                # Determine the server interface name from the user's tenant info.
+                # /api/auth/me returns wg_server_interface when a WG server has been
+                # claimed for this tenant; fall back to the conventional "wg0".
+                wg_server_iface = self._user_info.get("wg_server_interface") or "wg0"
 
-                        if config_changed:
-                            if was_running:
-                                tunnel.disconnect(WG_INTERFACE)
-                            tunnel.connect(WG_INTERFACE)
-                        elif not was_running:
-                            tunnel.connect(WG_INTERFACE)
+                # ── Server-PC detection ──────────────────────────────────────
+                # If the WG server interface is already running on THIS machine,
+                # this PC IS the hub.  It must not register as a client device:
+                # its IP is .1 (reserved for the server) and it should never appear
+                # in the pending-devices list regardless of which user is logged in.
+                _is_server_pc = tunnel.is_wg_server_running(wg_server_iface)
+
+                if _is_server_pc:
+                    # Server PC: skip client registration entirely.
+                    # Just grab the local keypair so node_id is available for the
+                    # heartbeat loop (server still sends heartbeats so the dashboard
+                    # can show it as online, but via the server's own device record).
+                    print(f"[WG] Server interface '{wg_server_iface}' is running on this PC — skipping client registration.")
+                    priv, pub = tunnel.get_or_create_keypair()
+                    node_id = pub
+                    self._device_id = None  # No client device record for this PC
+                else:
+                    # ── Client PC registration ───────────────────────────────
+                    # Only non-server PCs register as client devices.
+                    # Master/second_master who haven't set up the server yet should
+                    # go through claim_wg_server first; they also skip client reg.
+                    is_master_role = role in ("master", "second_master")
+                    has_wg_server = self._user_info.get("has_wg_server", False)
+
+                    if is_master_role and not has_wg_server:
+                        # Master with no server claimed yet — don't create a stray
+                        # client device record.  The claim-network / claim-wg-server
+                        # flow handles this separately.
+                        print("[WG] Master role with no WG server claimed — skipping client registration.")
+                        priv, pub = tunnel.get_or_create_keypair()
+                        node_id = pub
+                        self._device_id = None
                     else:
-                        print("WireGuard registration error: Backend did not return valid details. (Is the wg0 interface running on the server?)")
-                except Exception as e:
-                    print("WireGuard registration failed:", e)
-    
-                priv, pub = tunnel.get_or_create_keypair()
-                node_id = pub
+                        # Normal client registration path
+                        try:
+                            # pyrefly: ignore [missing-import]
+                            from services.network_monitor import _get_active_interface
+                            lan_ip = _get_active_interface()
+                            existing_priv, existing_pub = tunnel.get_or_create_keypair()
+                            req_data = {
+                                "hostname": socket.gethostname(),
+                                "lan_ip": lan_ip
+                            }
+                            if existing_pub:
+                                req_data["wg_public_key"] = existing_pub
+
+                            res = api._req("POST", "/api/devices/wg-register", json=req_data)
+                            config_str = res.get("config")
+                            assigned_ip = res.get("assigned_ip")
+                            server_pubkey = res.get("server_pubkey")
+                            server_endpoint = res.get("server_endpoint")
+                            server_endpoint_secondary = res.get("server_endpoint_secondary")
+                            priv = res.get("private_key") or existing_priv
+                            self._device_id = res.get("device_id")
+
+                            if config_str:
+                                import os
+                                # pyrefly: ignore [missing-import]
+                                from config import WG_CONFIG_DIR, WG_INTERFACE
+                                config_path = os.path.join(WG_CONFIG_DIR, f"{WG_INTERFACE}.conf")
+
+                                was_running = tunnel.is_wireguard_running()
+
+                                listen_port = 51820
+                                pub_ip, pub_port = tunnel.discover_stun(listen_port)
+                                if pub_ip and pub_port:
+                                    print(f"STUN Discovered Endpoint: {pub_ip}:{pub_port}")
+                                    # WireGuard handles endpoint updating automatically via PersistentKeepalive
+                                if priv:
+                                    config_str = config_str.replace("REPLACE_ME", priv)
+
+                                os.makedirs(os.path.dirname(config_path), exist_ok=True)
+                                config_changed = False
+                                if os.path.exists(config_path):
+                                    with open(config_path, "r") as f:
+                                        if f.read() != config_str:
+                                            config_changed = True
+                                else:
+                                    config_changed = True
+
+                                if config_changed:
+                                    with open(config_path, "w") as f:
+                                        f.write(config_str)
+
+                                import json
+                                failover_path = os.path.join(WG_CONFIG_DIR, "failover.json")
+                                if server_endpoint_secondary:
+                                    with open(failover_path, "w") as f:
+                                        json.dump({
+                                            "primary": server_endpoint,
+                                            "secondary": server_endpoint_secondary,
+                                            "current": "primary",
+                                            "priv": priv,
+                                            "assigned_ip": assigned_ip,
+                                            "server_pubkey": server_pubkey
+                                        }, f)
+                                else:
+                                    if os.path.exists(failover_path):
+                                        os.remove(failover_path)
+
+                                if config_changed:
+                                    if was_running:
+                                        tunnel.disconnect(WG_INTERFACE)
+                                    tunnel.connect(WG_INTERFACE)
+                                elif not was_running:
+                                    tunnel.connect(WG_INTERFACE)
+                            else:
+                                print("WireGuard registration error: Backend did not return valid details. (Is the wg0 interface running on the server?)")
+                        except Exception as e:
+                            print("WireGuard registration failed:", e)
+
+                        priv, pub = tunnel.get_or_create_keypair()
+                        node_id = pub
             else:
                 if tunnel.is_zerotier_running():
                     node_info = tunnel.get_node_info()

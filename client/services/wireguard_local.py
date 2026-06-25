@@ -118,6 +118,15 @@ def connect(config_name_or_path: str) -> bool:
         
     return _run_with_elevation_fallback(cmd)
 
+def sync_config(config_name_or_path: str) -> bool:
+    name = os.path.basename(config_name_or_path).replace(".conf", "")
+    path = config_name_or_path
+    if not path.endswith(".conf"):
+        path = os.path.join(WG_CONFIG_DIR, f"{config_name_or_path}.conf")
+        
+    cmd = [WG_CMD, "syncconf", name, path]
+    return _run_with_elevation_fallback(cmd)
+
 def disconnect(config_name: str) -> bool:
     if sys.platform == "win32":
         name = os.path.basename(config_name).replace(".conf", "")
@@ -180,6 +189,28 @@ def is_wireguard_running() -> bool:
         if "interface:" in res.stdout:
             return True
         return False
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return False
+
+
+def is_wg_server_running(server_interface: str = "wg0") -> bool:
+    """Return True if the WireGuard SERVER interface (e.g. wg0) is currently up.
+
+    This is intentionally separate from is_wireguard_running(), which checks any
+    active WireGuard interface.  The server interface name comes from the tenant's
+    claimed server config (passed in from the /api/auth/me response) and defaults
+    to "wg0".  If that specific interface is up, this PC is acting as the WG hub
+    and must NOT register itself as a client device.
+    """
+    try:
+        creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+        res = subprocess.run(
+            [WG_CMD, "show", server_interface],
+            capture_output=True, text=True,
+            creationflags=creationflags
+        )
+        # Exit code 0 + "interface:" in output → interface exists and is up
+        return res.returncode == 0 and "interface:" in res.stdout
     except (subprocess.CalledProcessError, FileNotFoundError):
         return False
 
