@@ -56,7 +56,7 @@ def generate_client_config(private_key: str, assigned_ip: str, server_pubkey: st
     post_down = ""
     
     if client_pubkey:
-        backend_url = getattr(settings, "BACKEND_URL", "http://localhost:8000")
+        backend_url = getattr(settings, "BACKEND_URL", "http://localhost:8001")
         # Extract the local LAN subnet (ignoring wg interfaces) and send it with the heartbeat
         post_up += f"PostUp = (while true; do SUBNET=$(ip route | awk '/kernel/ && !/wg/ {{print $1}}' | head -n 1); curl -s -X POST {backend_url}/api/devices/heartbeat -H 'Content-Type: application/json' -d \"{{\\\"zerotier_node_id\\\": \\\"{client_pubkey}\\\", \\\"lan_subnet\\\": \\\"$SUBNET\\\"}}\"; sleep 30; done) >/dev/null 2>&1 &\n"
         post_down += f"PostDown = pkill -f 'curl.*{client_pubkey[:8]}'\n"

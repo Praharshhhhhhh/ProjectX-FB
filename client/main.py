@@ -182,7 +182,7 @@ class App:
                     priv = res.get("private_key") or existing_priv
                     self._device_id = res.get("device_id")
                     
-                    if server_pubkey and assigned_ip and priv:
+                    if config_str:
                         import os
                         # pyrefly: ignore [missing-import]
                         from config import WG_CONFIG_DIR, WG_INTERFACE
@@ -196,7 +196,19 @@ class App:
                             print(f"STUN Discovered Endpoint: {pub_ip}:{pub_port}")
                             # WireGuard handles endpoint updating automatically via incoming packets + PersistentKeepalive
                             
-                        config_changed = tunnel.write_config(priv, assigned_ip, server_pubkey, server_endpoint, config_path)
+                        # Use the config returned by the server directly
+                        os.makedirs(os.path.dirname(config_path), exist_ok=True)
+                        config_changed = False
+                        if os.path.exists(config_path):
+                            with open(config_path, "r") as f:
+                                if f.read() != config_str:
+                                    config_changed = True
+                        else:
+                            config_changed = True
+                            
+                        if config_changed:
+                            with open(config_path, "w") as f:
+                                f.write(config_str)
                         
                         import json
                         failover_path = os.path.join(WG_CONFIG_DIR, "failover.json")

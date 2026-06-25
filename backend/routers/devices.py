@@ -230,15 +230,15 @@ async def register_wg_device(req: WgDeviceRegister, current_user: Annotated[User
                 db.flush()
                 existing = None
             else:
-                config_str = wireguard_controller.generate_client_config("", existing.wg_ip, server_pubkey, server_endpoint, client_pubkey=existing.wg_public_key)
-                wireguard_controller.sync_peer_to_vps(existing.wg_public_key, existing.wg_ip)
+                config_str = _generate_device_config(existing, db)
                 return {
                     "assigned_ip": existing.wg_ip,
-                    "server_pubkey": server_pubkey,
-                    "server_endpoint": server_endpoint,
-                    "server_endpoint_secondary": server_endpoint_secondary,
+                    "server_pubkey": "",
+                    "server_endpoint": "",
+                    "server_endpoint_secondary": "",
                     "config": config_str,
-                    "private_key": ""
+                    "private_key": existing.wg_private_key or "",
+                    "device_id": existing.id
                 }
 
     priv_key = ""
@@ -251,13 +251,11 @@ async def register_wg_device(req: WgDeviceRegister, current_user: Annotated[User
 
     assigned_ip = wireguard_controller.assign_ip_from_pool(db, current_user.tenant_id)
     
-    config_str = wireguard_controller.generate_client_config(priv_key, assigned_ip, server_pubkey, server_endpoint, client_pubkey=pub_key)
-    wireguard_controller.sync_peer_to_vps(pub_key, assigned_ip)
-    
     device = Device(
         tenant_id=current_user.tenant_id,
         owner_id=current_user.id,
         wg_public_key=pub_key,
+        wg_private_key=priv_key,
         wg_ip=assigned_ip,
         lan_ip=req.lan_ip,
         name=req.hostname,
@@ -273,14 +271,16 @@ async def register_wg_device(req: WgDeviceRegister, current_user: Annotated[User
     
     await manager.broadcast_to_tenant(current_user.tenant_id, {"event": "device_updated", "device": _device_dict(device)})
     
+    config_str = _generate_device_config(device, db)
+    
     return {
         "assigned_ip": assigned_ip,
-        "server_pubkey": server_pubkey,
-        "server_endpoint": server_endpoint,
-        "server_endpoint_secondary": server_endpoint_secondary,
+        "server_pubkey": "",
+        "server_endpoint": "",
+        "server_endpoint_secondary": "",
         "config": config_str,
         "private_key": priv_key,
-        "device_id": device.id if 'device' in locals() else existing.id
+        "device_id": device.id
     }
 
 
@@ -554,14 +554,7 @@ async def reprovision_device(
         
     return {"message": "Reprovisioned"}
 
-@router.get("/{device_id}/conf", response_class=PlainTextResponse)
-async def get_device_conf(device_id: int, current_user: Annotated[User, Depends(get_current_user)], db: Annotated[Session, Depends(get_db)]):
-    device = db.query(Device).filter(Device.id == device_id).first()
-    if not device or not _user_can_see(current_user, device, db):
-        raise HTTPException(status_code=404, detail="Device not found")
-    if device.tunnel_type != "wireguard":
-        raise HTTPException(403, "Not a WireGuard device")
-    
+def _generate_device_config(device: Device, db: Session) -> str:
     owner = db.query(User).filter(User.id == device.owner_id).first()
     is_master = owner and owner.role in (UserRole.master, UserRole.second_master)
     
@@ -580,7 +573,7 @@ async def get_device_conf(device_id: int, current_user: Annotated[User, Depends(
                     "allowed_ips": f"{od.wg_ip}/32"
                 })
         conf = wireguard_controller.generate_hub_config(
-            private_key=device.wg_private_key,
+            private_key=device.wg_private_key or "",
             assigned_ip=device.wg_ip,
             listen_port=51820,
             peers=peers,
@@ -599,7 +592,7 @@ async def get_device_conf(device_id: int, current_user: Annotated[User, Depends(
         server_endpoint = f"{master_device.lan_ip}:51820" if master_device and master_device.lan_ip else "127.0.0.1:51820"
         
         conf = wireguard_controller.generate_client_config(
-            private_key=device.wg_private_key,
+            private_key=device.wg_private_key or "",
             assigned_ip=device.wg_ip,
             server_pubkey=server_pubkey,
             server_endpoint=server_endpoint,
@@ -607,6 +600,17 @@ async def get_device_conf(device_id: int, current_user: Annotated[User, Depends(
             real_subnet=device.lan_subnet,
             client_pubkey=device.wg_public_key
         )
+    return conf
+
+@router.get("/{device_id}/conf", response_class=PlainTextResponse)
+async def get_device_conf(device_id: int, current_user: Annotated[User, Depends(get_current_user)], db: Annotated[Session, Depends(get_db)]):
+    device = db.query(Device).filter(Device.id == device_id).first()
+    if not device or not _user_can_see(current_user, device, db):
+        raise HTTPException(status_code=404, detail="Device not found")
+    if device.tunnel_type != "wireguard":
+        raise HTTPException(403, "Not a WireGuard device")
+    
+    conf = _generate_device_config(device, db)
         
     return Response(content=conf, media_type="text/plain",
         headers={"Content-Disposition": f'attachment; filename="{device.name}.conf"'})
