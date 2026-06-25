@@ -124,32 +124,8 @@ def sync_config(config_name_or_path: str) -> bool:
     if not path.endswith(".conf"):
         path = os.path.join(WG_CONFIG_DIR, f"{config_name_or_path}.conf")
         
-    try:
-        # wg syncconf doesn't understand wg-quick extensions like Address, DNS, PostUp, etc.
-        # We need to strip them out into a temporary file.
-        with open(path, "r") as f:
-            lines = f.readlines()
-            
-        stripped_lines = []
-        for line in lines:
-            lower = line.strip().lower()
-            if not any(lower.startswith(prefix) for prefix in ["address", "dns", "postup", "postdown", "preup", "predown", "table", "mtu"]):
-                stripped_lines.append(line)
-                
-        temp_path = path + ".sync"
-        with open(temp_path, "w") as f:
-            f.writelines(stripped_lines)
-            
-        cmd = [WG_CMD, "syncconf", name, temp_path]
-        success = _run_with_elevation_fallback(cmd)
-        
-        if os.path.exists(temp_path):
-            os.remove(temp_path)
-            
-        return success
-    except Exception as e:
-        print(f"Sync config error: {e}")
-        return False
+    cmd = [WG_CMD, "syncconf", name, path]
+    return _run_with_elevation_fallback(cmd)
 
 def disconnect(config_name: str) -> bool:
     if sys.platform == "win32":

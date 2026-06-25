@@ -36,10 +36,9 @@ def assign_ip_from_pool(db: Session, tenant_id: int) -> str:
     
     # Use the tenant_id to determine the subnet (e.g. 10.T.0.X) to avoid collisions
     # between tenants on the same server, or to isolate them cleanly.
-    t_id = tenant_id if tenant_id is not None else 0
-    t_subnet = (t_id % 254) + 1
+    t_subnet = (tenant_id % 254) + 1
     
-    for i in range(1, 255):
+    for i in range(2, 255):
         ip = f"10.{t_subnet}.0.{i}"
         if ip not in used_ips:
             return ip

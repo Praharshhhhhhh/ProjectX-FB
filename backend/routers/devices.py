@@ -118,10 +118,10 @@ async def _handle_subnet_overlap(device: Device, db: Session):
 
 
 def _user_can_see(user: User, device: Device, db: Session) -> bool:
-    if user.role in (UserRole.system_owner, UserRole.master, UserRole.second_master):
+    if user.role in (UserRole.master, UserRole.second_master):
         if device.tenant_id == user.tenant_id:
             return True
-    if user.is_trusted or user.role in (UserRole.trusted, UserRole.admin):
+    if user.is_trusted or user.role == UserRole.trusted:
         if device.tenant_id == user.tenant_id and device.is_approved:
             return True
             
@@ -129,6 +129,8 @@ def _user_can_see(user: User, device: Device, db: Session) -> bool:
     if access is not None:
         return True
         
+    # Check if device is shared to user's tenant
+    # pyrefly: ignore [missing-import]
     from models.device_share import DeviceShare
     share = db.query(DeviceShare).filter_by(device_id=device.id, target_tenant_id=user.tenant_id).first()
     if share is not None:
@@ -212,9 +214,6 @@ async def register_device(req: DeviceRegister, db: Annotated[Session, Depends(ge
 
 @router.post("/wg-register")
 async def register_wg_device(req: WgDeviceRegister, current_user: Annotated[User, Depends(get_current_user)], db: Annotated[Session, Depends(get_db)]):
-    if current_user.tenant_id is None:
-        raise HTTPException(status_code=400, detail="System owner cannot register a WireGuard device directly without a tenant. Please use an activation key for a specific tenant.")
-
     from models import Tenant
     tenant = db.query(Tenant).filter(Tenant.id == current_user.tenant_id).first()
     from config import get_settings
@@ -231,62 +230,15 @@ async def register_wg_device(req: WgDeviceRegister, current_user: Annotated[User
                 db.flush()
                 existing = None
             else:
-                if not existing.is_approved:
-                    return {"message": "Registered, awaiting approval", "device_id": existing.id}
-                
-                is_master = current_user.role in (UserRole.master, UserRole.second_master)
-                
-                if is_master:
-                    peers = []
-                    other_devices = db.query(Device).filter(
-                        Device.tenant_id == existing.tenant_id,
-                        Device.tunnel_type == "wireguard",
-                        Device.is_approved == True,
-                        Device.id != existing.id
-                    ).all()
-                    for od in other_devices:
-                        if od.wg_public_key and od.wg_ip:
-                            peers.append({
-                                "pubkey": od.wg_public_key,
-                                "allowed_ips": f"{od.wg_ip}/32"
-                            })
-                    config_str = wireguard_controller.generate_hub_config(
-                        private_key=existing.wg_private_key or "",
-                        assigned_ip=existing.wg_ip,
-                        listen_port=51820,
-                        peers=peers,
-                        virtual_pool=existing.nat_virtual_pool,
-                        real_subnet=existing.lan_subnet
-                    )
-                else:
-                    master_device = db.query(Device).join(User, Device.owner_id == User.id).filter(
-                        Device.tenant_id == existing.tenant_id,
-                        User.role.in_([UserRole.master, UserRole.second_master]),
-                        Device.tunnel_type == "wireguard",
-                        Device.is_approved == True
-                    ).first()
-                    
-                    srv_pubkey = master_device.wg_public_key if master_device else ""
-                    srv_endpoint = f"{master_device.lan_ip}:51820" if master_device and master_device.lan_ip else "127.0.0.1:51820"
-                    
-                    config_str = wireguard_controller.generate_client_config(
-                        private_key=existing.wg_private_key or "",
-                        assigned_ip=existing.wg_ip,
-                        server_pubkey=srv_pubkey,
-                        server_endpoint=srv_endpoint,
-                        virtual_pool=existing.nat_virtual_pool,
-                        real_subnet=existing.lan_subnet,
-                        client_pubkey=existing.wg_public_key
-                    )
-                
+                config_str = wireguard_controller.generate_client_config("", existing.wg_ip, server_pubkey, server_endpoint, client_pubkey=existing.wg_public_key)
+                wireguard_controller.sync_peer_to_vps(existing.wg_public_key, existing.wg_ip)
                 return {
                     "assigned_ip": existing.wg_ip,
-                    "server_pubkey": srv_pubkey if not is_master else server_pubkey,
-                    "server_endpoint": srv_endpoint if not is_master else server_endpoint,
+                    "server_pubkey": server_pubkey,
+                    "server_endpoint": server_endpoint,
                     "server_endpoint_secondary": server_endpoint_secondary,
                     "config": config_str,
-                    "private_key": "",
-                    "device_id": existing.id
+                    "private_key": ""
                 }
 
     priv_key = ""
@@ -521,10 +473,6 @@ async def remove_device(device_id: int, current_user: Annotated[User, Depends(re
     if not device:
         raise HTTPException(status_code=404, detail="Device not found")
         
-    owner = db.query(User).filter(User.id == device.owner_id).first()
-    if owner and owner.role in (UserRole.master, UserRole.second_master):
-        raise HTTPException(status_code=403, detail="Cannot remove the Master Hub device")
-        
     await deprovision_device(device)
     await remove_iptables_nat_rule(device.id)
     
@@ -688,10 +636,6 @@ async def sync_device_toggle(
     device = db.query(Device).filter(Device.id == device_id).first()
     if not device or not _user_can_see(current_user, device, db):
         raise HTTPException(status_code=404, detail="Device not found or unauthorized")
-        
-    owner = db.query(User).filter(User.id == device.owner_id).first()
-    if owner and owner.role in (UserRole.master, UserRole.second_master):
-        raise HTTPException(status_code=403, detail="Cannot toggle the Master Hub remotely")
         
     device.status = DeviceStatus.connecting if req.connect else DeviceStatus.offline
     db.commit()
