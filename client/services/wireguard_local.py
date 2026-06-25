@@ -110,13 +110,65 @@ def connect(config_name_or_path: str) -> bool:
         path = config_name_or_path
         if not path.endswith(".conf"):
             path = os.path.join(WG_CONFIG_DIR, f"{config_name_or_path}.conf")
+        iface_name = os.path.basename(path).replace(".conf", "")
         wg_manager = get_bin_path("wireguard.exe")
-        cmd = [wg_manager, "/installtunnelservice", path]
+        cf = subprocess.CREATE_NO_WINDOW
+
+        # WireGuard on Windows registers a service named "WireGuardTunnel$<iface>".
+        # /installtunnelservice fails if the service already exists (even when stopped),
+        # which leaves the tunnel installed but never started.
+        # Strategy:
+        #   1. Try starting the existing service directly — fastest path on re-login.
+        #   2. If the service doesn't exist yet, install (which also starts it).
+        #   3. If install fails because the service exists but is broken, uninstall
+        #      first then re-install.
+
+        svc_name = f"WireGuardTunnel${iface_name}"
+
+        # Step 1: try starting the existing service
+        start_res = subprocess.run(
+            ["sc", "start", svc_name],
+            capture_output=True, creationflags=cf
+        )
+        if start_res.returncode == 0:
+            return True
+
+        # Service not found (1060) or some other error — attempt fresh install
+        install_res = subprocess.run(
+            [wg_manager, "/installtunnelservice", path],
+            capture_output=True, creationflags=cf
+        )
+        if install_res.returncode == 0:
+            return True
+
+        # Install failed — service likely exists in a broken/stopped state.
+        # Uninstall it, then reinstall cleanly.
+        subprocess.run(
+            [wg_manager, "/uninstalltunnelservice", iface_name],
+            capture_output=True, creationflags=cf
+        )
+        import time as _time
+        _time.sleep(1)
+        final_res = subprocess.run(
+            [wg_manager, "/installtunnelservice", path],
+            capture_output=True, creationflags=cf
+        )
+        if final_res.returncode == 0:
+            return True
+
+        # Last resort: elevate via PowerShell UAC
+        try:
+            args_joined = f'"/installtunnelservice" "{path}"'
+            ps_cmd = f"Start-Process -FilePath '{wg_manager}' -ArgumentList '{args_joined}' -Verb RunAs -WindowStyle Hidden -Wait"
+            subprocess.run(["powershell", "-Command", ps_cmd], check=True, creationflags=cf)
+            return True
+        except Exception as e:
+            print("WireGuard connect elevation fallback failed:", e)
+            return False
     else:
         name = os.path.basename(config_name_or_path).replace(".conf", "")
         cmd = ["wg-quick", "up", name]
-        
-    return _run_with_elevation_fallback(cmd)
+        return _run_with_elevation_fallback(cmd)
 
 def sync_config(config_name_or_path: str) -> bool:
     name = os.path.basename(config_name_or_path).replace(".conf", "")
@@ -128,15 +180,22 @@ def sync_config(config_name_or_path: str) -> bool:
     return _run_with_elevation_fallback(cmd)
 
 def disconnect(config_name: str) -> bool:
+    name = os.path.basename(config_name).replace(".conf", "")
     if sys.platform == "win32":
-        name = os.path.basename(config_name).replace(".conf", "")
+        cf = subprocess.CREATE_NO_WINDOW
         wg_manager = get_bin_path("wireguard.exe")
-        cmd = [wg_manager, "/uninstalltunnelservice", name]
+        # Stop the service first so uninstall doesn't hang waiting for it
+        svc_name = f"WireGuardTunnel${name}"
+        subprocess.run(["sc", "stop", svc_name], capture_output=True, creationflags=cf)
+        import time as _time
+        _time.sleep(1)
+        res = subprocess.run(
+            [wg_manager, "/uninstalltunnelservice", name],
+            capture_output=True, creationflags=cf
+        )
+        return res.returncode == 0
     else:
-        name = os.path.basename(config_name).replace(".conf", "")
-        cmd = ["wg-quick", "down", name]
-        
-    return _run_with_elevation_fallback(cmd)
+        return _run_with_elevation_fallback(["wg-quick", "down", name])
 
 def get_status(config_name: str) -> str:
     name = os.path.basename(config_name).replace(".conf", "")
@@ -182,15 +241,28 @@ def get_network_ip(config_name: str) -> Optional[str]:
     return None
 
 def is_wireguard_running() -> bool:
+    """Return True if any WireGuard tunnel interface is currently active."""
+    cf = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
     try:
-        creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
-        res = subprocess.run([WG_CMD, "show"], capture_output=True, text=True, check=True, creationflags=creationflags)
-        # If output has interface, it's running
-        if "interface:" in res.stdout:
+        res = subprocess.run([WG_CMD, "show"], capture_output=True, text=True, creationflags=cf)
+        if res.returncode == 0 and "interface:" in res.stdout:
             return True
-        return False
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        return False
+    except FileNotFoundError:
+        pass
+
+    if sys.platform == "win32":
+        # Also check via sc query in case the service is running but wg show
+        # hasn't picked up the interface yet (race on service start).
+        try:
+            sc = subprocess.run(
+                ["sc", "query", "type=", "all", "state=", "running"],
+                capture_output=True, text=True, creationflags=cf
+            )
+            if "WireGuardTunnel" in sc.stdout:
+                return True
+        except Exception:
+            pass
+    return False
 
 
 def is_wg_server_running(server_interface: str = "wg0") -> bool:
