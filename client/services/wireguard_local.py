@@ -92,8 +92,8 @@ def _run_with_elevation_fallback(cmd: list) -> bool:
         if sys.platform == "win32":
             try:
                 exe = cmd[0]
-                # Join arguments without extra quotes because wireguard.exe expects literal slashes
-                args_joined = " ".join(str(a) for a in cmd[1:])
+                # Join arguments into a single double-quoted string to avoid PowerShell array parsing bugs
+                args_joined = " ".join(f'"{str(a)}"' for a in cmd[1:])
                 ps_cmd = f"Start-Process -FilePath '{exe}' -ArgumentList '{args_joined}' -Verb RunAs -WindowStyle Hidden -Wait"
                 subprocess.run(["powershell", "-Command", ps_cmd], check=True, creationflags=subprocess.CREATE_NO_WINDOW)
                 return True
@@ -152,14 +152,6 @@ def sync_config(config_name_or_path: str) -> bool:
         return False
 
 def disconnect(config_name: str) -> bool:
-    try:
-        from config import WG_CONFIG_DIR
-        failover = os.path.join(WG_CONFIG_DIR, "failover.json")
-        if os.path.exists(failover):
-            os.remove(failover)
-    except Exception:
-        pass
-        
     if sys.platform == "win32":
         name = os.path.basename(config_name).replace(".conf", "")
         wg_manager = get_bin_path("wireguard.exe")
