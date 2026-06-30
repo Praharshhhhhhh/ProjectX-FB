@@ -1,36 +1,90 @@
+from datetime import datetime, timedelta
+import uuid
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
-# pyrefly: ignore [missing-import]
 from database import get_db
-# pyrefly: ignore [missing-import]
 from models import User, UserRole, ActivationKey, Tenant
-# pyrefly: ignore [missing-import]
 from schemas.auth import (
-    LoginRequest, Token, ActivateKeyRequest, ClaimNetworkRequest,
-    ClaimWgServerRequest, Verify2FARequest, ChangePasswordRequest
+    LoginRequest, Token, ActivateKeyRequest, ChangePasswordRequest,
+    VerifyOtpRequest, ResendOtpRequest,
 )
-# pyrefly: ignore [missing-import]
 from services import auth_service
-# pyrefly: ignore [missing-import]
-from services import audit_service
-# pyrefly: ignore [missing-import]
-from services.audit_service import log
-# pyrefly: ignore [missing-import]
-from models.audit_log import AuditLevel
-# pyrefly: ignore [missing-import]
+from services import email_service
 from routers.deps import get_current_user
-import secrets
+from config import get_settings
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
+settings = get_settings()
 
 
-@router.post("/login", response_model=Token)
+@router.post("/login")
 def login(req: LoginRequest, db: Session = Depends(get_db)):
     user = auth_service.authenticate_user(db, req.email, req.password)
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
     if not user.is_active:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Account disabled")
+
+    if auth_service.requires_email_otp(user):
+        # Generate OTP, hash it, store, email it — no JWT yet
+        code = auth_service.generate_otp_code()
+        user.email_otp_code_hash = auth_service.hash_otp(code)
+        user.email_otp_expires_at = datetime.utcnow() + timedelta(minutes=settings.OTP_EXPIRY_MINUTES)
+        user.email_otp_attempts = 0
+        user.email_otp_last_sent_at = datetime.utcnow()
+        db.commit()
+
+        print(f"[DEBUG] Generated OTP code for {user.email}: {code}")
+        try:
+            email_service.send_otp_email(user.email, code)
+        except Exception:
+            pass  # Email send failure shouldn't block login flow
+
+        return Token(requires_otp=True, role=user.role)
+
+    # No OTP required — issue JWT immediately
+    token = auth_service.create_access_token({
+        "user_id": user.id,
+        "uuid": user.uuid,
+        "role": user.role,
+        "tenant_id": user.tenant_id,
+    })
+
+    return Token(
+        access_token=token,
+        role=user.role,
+        requires_password_change=user.must_change_password,
+    )
+
+
+@router.post("/verify-otp")
+def verify_otp(req: VerifyOtpRequest, db: Session = Depends(get_db)):
+    user = auth_service.get_user_by_email(db, req.email)
+    if not user:
+        raise HTTPException(status_code=400, detail="OTP expired or not requested.")
+
+    # Check expiry
+    if not user.email_otp_code_hash or not user.email_otp_expires_at:
+        raise HTTPException(status_code=400, detail="OTP expired or not requested.")
+    if user.email_otp_expires_at < datetime.utcnow():
+        raise HTTPException(status_code=400, detail="OTP expired or not requested.")
+
+    # Check attempt limit
+    if user.email_otp_attempts >= settings.OTP_MAX_ATTEMPTS:
+        raise HTTPException(status_code=400, detail="Too many incorrect attempts. Please request a new code.")
+
+    # Verify code
+    if not auth_service.verify_otp_hash(req.code, user.email_otp_code_hash):
+        user.email_otp_attempts += 1
+        db.commit()
+        raise HTTPException(status_code=400, detail="Invalid code.")
+
+    # Success — clear OTP fields, mark first login done, and issue JWT
+    user.email_otp_code_hash = None
+    user.email_otp_expires_at = None
+    user.email_otp_attempts = 0
+    user.first_login_otp_done = True  # Never ask OTP again unless force_otp is set
+    db.commit()
 
     token = auth_service.create_access_token({
         "user_id": user.id,
@@ -39,154 +93,93 @@ def login(req: LoginRequest, db: Session = Depends(get_db)):
         "tenant_id": user.tenant_id,
     })
 
-    log(db, "login", f"{user.full_name} logged in", tenant_id=user.tenant_id,
-        user_id=user.id, user_name=user.full_name, level=AuditLevel.info)
-
     return Token(
         access_token=token,
         role=user.role,
-        requires_2fa=auth_service.requires_2fa_setup(user),
         requires_password_change=user.must_change_password,
     )
 
 
+@router.post("/resend-otp")
+def resend_otp(req: ResendOtpRequest, db: Session = Depends(get_db)):
+    user = auth_service.get_user_by_email(db, req.email)
+    if not user:
+        # Don't reveal whether the email exists
+        return {"message": "If that email is registered, a new code has been sent."}
+
+    # Rate limit check
+    if user.email_otp_last_sent_at:
+        elapsed = (datetime.utcnow() - user.email_otp_last_sent_at).total_seconds()
+        if elapsed < settings.OTP_RESEND_COOLDOWN_SECONDS:
+            raise HTTPException(
+                status_code=429,
+                detail=f"Please wait {int(settings.OTP_RESEND_COOLDOWN_SECONDS - elapsed)} seconds before requesting a new code.",
+            )
+
+    code = auth_service.generate_otp_code()
+    user.email_otp_code_hash = auth_service.hash_otp(code)
+    user.email_otp_expires_at = datetime.utcnow() + timedelta(minutes=settings.OTP_EXPIRY_MINUTES)
+    user.email_otp_attempts = 0
+    user.email_otp_last_sent_at = datetime.utcnow()
+    db.commit()
+
+    print(f"[DEBUG] Generated OTP code for {user.email}: {code}")
+    try:
+        email_service.send_otp_email(user.email, code)
+    except Exception:
+        pass
+
+    return {"message": "If that email is registered, a new code has been sent."}
+
+
 @router.post("/activate-key")
 def activate_master_key(req: ActivateKeyRequest, db: Session = Depends(get_db)):
+    # 1. Validate key exists and is unused
     key = db.query(ActivationKey).filter(
         ActivationKey.key_code == req.key_code, ActivationKey.is_used == False
     ).first()
     if not key:
         raise HTTPException(status_code=400, detail="Invalid or already used activation key")
 
+    # 2. Guard duplicate email
     existing = db.query(User).filter(User.email == req.email).first()
     if existing:
         raise HTTPException(status_code=400, detail="Email already registered")
 
-    existing_master = db.query(User).filter(
-        User.tenant_id == key.tenant_id, User.role == UserRole.master
-    ).first()
-    if existing_master:
-        raise HTTPException(status_code=400, detail="Tenant already has a master user")
+    # 3. Create a new Tenant for this master user
+    tenant_name = f"Tenant of {req.email.split('@')[0]}"
+    base_name = tenant_name
+    counter = 1
+    while db.query(Tenant).filter(Tenant.company_name == tenant_name).first():
+        tenant_name = f"{base_name} ({counter})"
+        counter += 1
 
-    import uuid
+    tenant = Tenant(company_name=tenant_name)
+    db.add(tenant)
+    db.flush()
+
+    import uuid as _uuid
     user = User(
         email=req.email,
         full_name=req.full_name,
         hashed_password=auth_service.hash_password(req.password),
         role=UserRole.master,
-        tenant_id=key.tenant_id,
         is_active=True,
-        uuid=uuid.uuid4().hex
+        tenant_id=tenant.id,
+        uuid=_uuid.uuid4().hex,
     )
     db.add(user)
-    db.flush()
-
-    key.is_used = True
-    key.used_by_user_id = user.id
-
-    tenant = db.query(Tenant).filter(Tenant.id == key.tenant_id).first()
-    if tenant:
-        # pyrefly: ignore [missing-import]
-        from models.tenant import TenantStatus
-        tenant.status = TenantStatus.active
-
     db.commit()
     db.refresh(user)
 
-    log(db, "master_activated", f"Master user {user.email} activated for tenant {key.tenant_id}",
-        tenant_id=key.tenant_id, user_id=user.id, user_name=user.full_name, level=AuditLevel.success)
-
+    # 4. Issue JWT — router must be separately claimed via POST /api/routers/claim
     token = auth_service.create_access_token({
-        "user_id": user.id, "role": user.role, "tenant_id": user.tenant_id
+        "user_id": user.id,
+        "uuid": user.uuid,
+        "role": user.role,
+        "tenant_id": user.tenant_id,
     })
-    return Token(access_token=token, role=user.role, requires_2fa=True)
-
-
-@router.post("/setup-2fa")
-def setup_2fa(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    # Removed check: allow re-configuration of 2FA even if already enabled
-    secret = auth_service.generate_totp_secret()
-    current_user.totp_secret = secret
-    db.commit()
-    qr = auth_service.get_totp_qr_base64(secret, current_user.email)
-    return {"qr_code": qr, "secret": secret}
-
-
-@router.post("/verify-2fa")
-def verify_2fa(req: Verify2FARequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    if not current_user.totp_secret:
-        raise HTTPException(status_code=400, detail="2FA not configured")
-    if not auth_service.verify_totp(current_user.totp_secret, req.code):
-        raise HTTPException(status_code=400, detail="Invalid 2FA code")
-    current_user.totp_enabled = True
-    db.commit()
-    log(db, "totp_toggled", f"2FA enabled for {current_user.email}",
-        tenant_id=current_user.tenant_id, user_id=current_user.id, user_name=current_user.full_name)
-    return {"message": "2FA enabled successfully"}
-
-
-@router.post("/claim-network")
-def claim_network(req: ClaimNetworkRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    if current_user.role not in (UserRole.master, UserRole.second_master):
-        raise HTTPException(status_code=403, detail="Only master users can claim a network")
-    tenant = db.query(Tenant).filter(Tenant.id == current_user.tenant_id).first()
-    if not tenant:
-        raise HTTPException(status_code=404, detail="Tenant not found")
-    if tenant.zerotier_network_id:
-        raise HTTPException(status_code=400, detail="Network already claimed")
-    existing = db.query(Tenant).filter(Tenant.zerotier_network_id == req.network_id).first()
-    if existing:
-        raise HTTPException(status_code=400, detail="Network ID already in use")
-    tenant.zerotier_network_id = req.network_id
-    tenant.network_owner_id = current_user.id
-    db.commit()
-    log(db, "network_claimed", f"ZeroTier network {req.network_id} claimed",
-        tenant_id=tenant.id, user_id=current_user.id, user_name=current_user.full_name, level=AuditLevel.success)
-    return {"message": "Network claimed successfully", "network_id": req.network_id}
-
-
-@router.post("/claim-wg-server")
-def claim_wg_server(
-    req: ClaimWgServerRequest,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    if current_user.role not in (UserRole.master, UserRole.second_master):
-        raise HTTPException(403, "Only master users can claim a WireGuard server")
-    
-    tenant = db.query(Tenant).filter(Tenant.id == current_user.tenant_id).first()
-    if not tenant:
-        raise HTTPException(404, "Tenant not found")
-    
-    import base64
-    try:
-        decoded = base64.b64decode(req.server_public_key + "==")
-        if len(decoded) != 32:
-            raise ValueError
-    except Exception:
-        raise HTTPException(400, "Invalid WireGuard public key format")
-    
-    parts = req.server_endpoint.rsplit(":", 1)
-    if len(parts) != 2 or not parts[1].isdigit():
-        raise HTTPException(400, "Endpoint must be in host:port format")
-    
-    tenant.wg_server_public_key = req.server_public_key
-    tenant.wg_server_endpoint = req.server_endpoint
-    tenant.wg_server_endpoint_secondary = req.server_endpoint_secondary
-    tenant.wg_server_interface = req.server_interface
-    tenant.network_owner_id = current_user.id
-    db.commit()
-    
-    log(db, "wg_server_claimed",
-        f"WireGuard server {req.server_endpoint} claimed by {current_user.full_name}",
-        tenant_id=tenant.id, user_id=current_user.id,
-        user_name=current_user.full_name, level=AuditLevel.success)
-    
-    return {
-        "message": "WireGuard server claimed successfully",
-        "server_endpoint": req.server_endpoint,
-        "server_public_key": req.server_public_key
-    }
+    return Token(access_token=token, role=user.role)
 
 
 @router.post("/change-password")
@@ -194,7 +187,40 @@ def change_password(req: ChangePasswordRequest, current_user: User = Depends(get
     current_user.hashed_password = auth_service.hash_password(req.new_password)
     current_user.must_change_password = False
     db.commit()
-    return {"message": "Password changed"}
+    return {"message": "Password updated successfully"}
+
+
+@router.post("/activate-master")
+def activate_master(req: ActivateKeyRequest, db: Session = Depends(get_db)):
+    if not req.key_code.startswith("MSTKEY-"):
+        raise HTTPException(status_code=400, detail="Invalid master activation key format")
+        
+    tenant = db.query(Tenant).filter(Tenant.master_activation_key == req.key_code).first()
+    if not tenant:
+        raise HTTPException(status_code=400, detail="Invalid or expired activation key")
+        
+    existing_user = db.query(User).filter(User.email == req.email).first()
+    if existing_user:
+        raise HTTPException(status_code=400, detail="Email already in use")
+        
+    # Create the master user
+    master_user = User(
+        tenant_id=tenant.id,
+        email=req.email,
+        full_name=req.full_name,
+        hashed_password=auth_service.hash_password(req.password),
+        role=UserRole.master,
+        must_change_password=False,
+        uuid=uuid.uuid4().hex,
+        first_login_otp_done=False
+    )
+    db.add(master_user)
+    
+    # Invalidate the activation key
+    tenant.master_activation_key = None
+    db.commit()
+    
+    return {"message": "Master Account activated successfully. You can now log in."}
 
 
 @router.get("/me")
@@ -207,10 +233,6 @@ def get_me(current_user: User = Depends(get_current_user), db: Session = Depends
         "full_name": current_user.full_name,
         "role": current_user.role,
         "tenant_id": current_user.tenant_id,
-        "network_id": tenant.zerotier_network_id if tenant else None,
-        "has_wg_server": bool(tenant.wg_server_public_key) if tenant else False,
-        "wg_server_public_key": tenant.wg_server_public_key if tenant else None,
-        "wg_server_interface": tenant.wg_server_interface if tenant else None,
-        "totp_enabled": current_user.totp_enabled,
+        "company_name": tenant.company_name if tenant else None,
         "must_change_password": current_user.must_change_password,
     }

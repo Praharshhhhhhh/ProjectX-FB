@@ -1,22 +1,17 @@
 from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-# pyrefly: ignore [missing-import]
+from pydantic import BaseModel, EmailStr
 from database import get_db
-# pyrefly: ignore [missing-import]
-from models import Tenant, User, ActivationKey, AuditLog, UserRole
-# pyrefly: ignore [missing-import]
+from models import Tenant, User, ActivationKey, UserRole, Router, RouterStatus
 from models.tenant import TenantStatus
-# pyrefly: ignore [missing-import]
 from schemas.tenant import TenantCreate, TenantOut, TenantUpdate
-# pyrefly: ignore [missing-import]
 from routers.deps import require_system_owner
-# pyrefly: ignore [missing-import]
-from services.audit_service import log
-# pyrefly: ignore [missing-import]
-from models.audit_log import AuditLevel
 import secrets
 import string
+import uuid
+from services.auth_service import hash_password
+from services.email_service import send_master_activation_email
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
@@ -37,15 +32,10 @@ def list_tenants(db: Annotated[Session, Depends(get_db)], _=Depends(require_syst
         result.append({
             "id": t.id,
             "company_name": t.company_name,
-            "city": t.city,
-            "zerotier_network_id": t.zerotier_network_id,
             "status": t.status,
             "created_at": t.created_at,
-            "device_count": len(t.devices),
             "user_count": len(t.users),
             "master_email": master_email,
-            "network_owner_id": t.network_owner_id,
-            "max_second_masters": getattr(t, "max_second_masters", 2),
         })
     return result
 
@@ -55,30 +45,21 @@ def create_tenant(req: TenantCreate, db: Annotated[Session, Depends(get_db)], ow
     existing = db.query(Tenant).filter(Tenant.company_name == req.company_name).first()
     if existing:
         raise HTTPException(status_code=400, detail="Tenant already exists")
-    tenant = Tenant(company_name=req.company_name, city=req.city, status=TenantStatus.pending)
+    
+    existing_user = db.query(User).filter(User.email == req.master_email).first()
+    if existing_user:
+        raise HTTPException(status_code=400, detail="Master email already in use")
+
+    master_key = _gen_key().replace("PXKEY", "MSTKEY")
+    
+    tenant = Tenant(company_name=req.company_name, status=TenantStatus.pending, master_activation_key=master_key)
     db.add(tenant)
     db.commit()
-    return {"id": tenant.id, "company_name": tenant.company_name, "status": tenant.status}
 
-@router.post("/force-2fa-all")
-async def force_2fa_all(db: Annotated[Session, Depends(get_db)], owner: Annotated[User, Depends(require_system_owner)]):
-    users = db.query(User).filter(User.role.in_([UserRole.master, UserRole.second_master])).all()
-    count = 0
-    for u in users:
-        if not u.force_2fa:
-            u.force_2fa = True
-            count += 1
-    db.commit()
-    log(db, "global_force_2fa", f"Forced 2FA globally for {count} users",
-        user_id=owner.id, user_name=owner.full_name, level=AuditLevel.warning)
-    
-    # Broadcast to all tenants
-    tenants = db.query(Tenant).all()
-    # pyrefly: ignore [missing-import]
-    from services.websocket_manager import manager
-    for t in tenants:
-        await manager.broadcast_to_tenant(t.id, {"event": "user_updated"})
-    return {"message": f"Enabled 2FA for {count} users"}
+    # Send activation email
+    send_master_activation_email(req.master_email, master_key, req.company_name)
+
+    return {"id": tenant.id, "company_name": tenant.company_name, "status": tenant.status}
 
 
 @router.patch("/tenants/{tenant_id}")
@@ -86,101 +67,20 @@ def update_tenant(tenant_id: int, req: TenantUpdate, db: Annotated[Session, Depe
     tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
     if not tenant:
         raise HTTPException(status_code=404, detail="Tenant not found")
-    if req.max_second_masters is not None:
-        tenant.max_second_masters = req.max_second_masters
+    # TenantUpdate currently empty after trim; extend as needed
     db.commit()
     db.refresh(tenant)
-    log(db, "tenant_updated", f"Tenant '{tenant.company_name}' updated",
-        user_id=owner.id, user_name=owner.full_name, level=AuditLevel.info)
     return {"message": "Tenant updated"}
 
 
 @router.delete("/tenants/{tenant_id}")
-# pyrefly: ignore [bad-function-definition]
-def delete_tenant(tenant_id: int, db: Annotated[Session, Depends(get_db)], owner: Annotated[User, Depends(require_system_owner)], totp_code: str = None):
-    if owner.totp_enabled:
-        if not totp_code:
-            raise HTTPException(status_code=400, detail="2FA code required")
-        # pyrefly: ignore [missing-import]
-        from services.auth_service import verify_totp
-        if not verify_totp(owner.totp_secret, totp_code):
-            raise HTTPException(status_code=400, detail="Invalid 2FA code")
-            
+def delete_tenant(tenant_id: int, db: Annotated[Session, Depends(get_db)], owner: Annotated[User, Depends(require_system_owner)]):
     tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
     if not tenant:
         raise HTTPException(status_code=404, detail="Tenant not found")
-    
-    tenant.network_owner_id = None
-    db.commit()
-    
     db.delete(tenant)
     db.commit()
-    log(db, "tenant_deleted", f"Tenant '{tenant.company_name}' deleted",
-        user_id=owner.id, user_name=owner.full_name, level=AuditLevel.warning)
     return {"message": "Deleted"}
-
-
-@router.get("/keys")
-def list_keys(db: Annotated[Session, Depends(get_db)], _=Depends(require_system_owner)):
-    keys = db.query(ActivationKey).order_by(ActivationKey.created_at.desc()).all()
-    result = []
-    for k in keys:
-        tenant = db.query(Tenant).filter(Tenant.id == k.tenant_id).first()
-        result.append({
-            "id": k.id,
-            "key_code": k.key_code,
-            "tenant_id": k.tenant_id,
-            "company_name": tenant.company_name if tenant else "—",
-            "is_used": k.is_used,
-            "created_at": k.created_at,
-        })
-    return result
-
-
-@router.post("/keys")
-def generate_key(tenant_id: int, db: Annotated[Session, Depends(get_db)], owner: Annotated[User, Depends(require_system_owner)]):
-    tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
-    if not tenant:
-        raise HTTPException(status_code=404, detail="Tenant not found")
-    key = ActivationKey(tenant_id=tenant_id, key_code=_gen_key())
-    db.add(key)
-    db.commit()
-    db.refresh(key)
-    log(db, "key_generated", f"Activation key generated for {tenant.company_name}",
-        user_id=owner.id, user_name=owner.full_name, level=AuditLevel.info)
-    return {"key_code": key.key_code, "tenant_id": tenant_id}
-
-
-@router.delete("/keys/{key_id}")
-def delete_key(key_id: int, db: Annotated[Session, Depends(get_db)], owner: Annotated[User, Depends(require_system_owner)]):
-    key = db.query(ActivationKey).filter(ActivationKey.id == key_id).first()
-    if not key:
-        raise HTTPException(status_code=404, detail="Key not found")
-    if key.is_used:
-        raise HTTPException(status_code=400, detail="Cannot delete a used key")
-    db.delete(key)
-    db.commit()
-    return {"message": "Deleted"}
-
-
-from datetime import datetime
-
-@router.get("/audit-logs")
-def all_audit_logs(
-    db: Annotated[Session, Depends(get_db)], 
-    _=Depends(require_system_owner),
-    from_date: datetime | None = None,
-    to_date: datetime | None = None
-):
-    query = db.query(AuditLog)
-    if from_date:
-        query = query.filter(AuditLog.created_at >= from_date)
-    if to_date:
-        query = query.filter(AuditLog.created_at <= to_date)
-        
-    logs = query.order_by(AuditLog.created_at.desc()).limit(500).all()
-    return [{"id": l.id, "user_name": l.user_name, "action": l.action,
-             "description": l.description, "level": l.level, "created_at": l.created_at} for l in logs]
 
 
 @router.get("/stats")
@@ -188,7 +88,6 @@ def stats(db: Annotated[Session, Depends(get_db)], _=Depends(require_system_owne
     return {
         "total_tenants": db.query(Tenant).count(),
         "active_tenants": db.query(Tenant).filter(Tenant.status == TenantStatus.active).count(),
-        "total_devices": sum(len(t.devices) for t in db.query(Tenant).all()),
         "pending_keys": db.query(ActivationKey).filter(ActivationKey.is_used == False).count(),
     }
 
@@ -204,40 +103,161 @@ def list_users(db: Annotated[Session, Depends(get_db)], _=Depends(require_system
             "email": u.email,
             "full_name": u.full_name,
             "role": u.role,
-            "force_2fa": u.force_2fa,
-            "totp_enabled": u.totp_enabled,
-            "company_name": tenant.company_name if tenant else "—"
+            "force_otp": u.force_otp,
+            "company_name": tenant.company_name if tenant else "—",
         })
     return result
 
-@router.get("/audit/export")
-def export_audit_logs(db: Annotated[Session, Depends(get_db)], _=Depends(require_system_owner)):
-    from fastapi.responses import StreamingResponse
-    import io
-    import csv
 
-    logs = db.query(AuditLog).order_by(AuditLog.created_at.desc()).all()
-    
-    output = io.StringIO()
-    writer = csv.writer(output)
-    writer.writerow(["ID", "Tenant ID", "User ID", "User Name", "Action", "Description", "Level", "Created At"])
-    
-    for log_ in logs:
-        writer.writerow([
-            log_.id,
-            log_.tenant_id or "",
-            log_.user_id or "",
-            log_.user_name or "",
-            log_.action,
-            log_.description,
-            log_.level,
-            log_.created_at.isoformat() if log_.created_at else ""
-        ])
-        
-    output.seek(0)
-    
-    return StreamingResponse(
-        iter([output.getvalue()]),
-        media_type="text/csv",
-        headers={"Content-Disposition": "attachment; filename=audit_logs.csv"}
+@router.get("/pending-keys")
+def list_pending_keys(db: Annotated[Session, Depends(get_db)], _=Depends(require_system_owner)):
+    """Return all unused activation keys with linked router info."""
+    keys = db.query(ActivationKey).filter(ActivationKey.is_used == False).all()
+    result = []
+    for k in keys:
+        router_obj = db.query(Router).filter(Router.id == k.router_id).first()
+        result.append({
+            "id": k.id,
+            "key_code": k.key_code,
+            "router_id": router_obj.router_id if router_obj else "—",
+            "serial_number": router_obj.serial_number if router_obj else "—",
+            "prepared_at": router_obj.prepared_at.isoformat() if router_obj and router_obj.prepared_at else None,
+            "is_used": k.is_used,
+        })
+    return result
+
+
+class ResendKeyRequest(BaseModel):
+    recipient_email: EmailStr
+
+
+@router.post("/pending-keys/{key_id}/resend")
+def resend_activation_key(
+    key_id: int,
+    req: ResendKeyRequest,
+    db: Annotated[Session, Depends(get_db)],
+    _=Depends(require_system_owner),
+):
+    """Resend an unused activation key email to a new or corrected address."""
+    key = db.query(ActivationKey).filter(ActivationKey.id == key_id, ActivationKey.is_used == False).first()
+    if not key:
+        raise HTTPException(status_code=404, detail="Key not found or already used")
+    router_obj = db.query(Router).filter(Router.id == key.router_id).first()
+    if not router_obj:
+        raise HTTPException(status_code=404, detail="Router linked to this key not found")
+    try:
+        from services.email_service import send_activation_key_email
+        send_activation_key_email(
+            to=req.recipient_email,
+            router_id=router_obj.router_id,
+            serial_number=router_obj.serial_number,
+            key_code=key.key_code,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to send email: {e}")
+    return {"message": "Activation key email resent"}
+
+
+@router.get("/activation-keys")
+def list_activation_keys(db: Annotated[Session, Depends(get_db)], _=Depends(require_system_owner)):
+    """Return all activation keys with linked router info."""
+    keys = db.query(ActivationKey).all()
+    result = []
+    for k in keys:
+        router_obj = db.query(Router).filter(Router.id == k.router_id).first()
+        result.append({
+            "id": k.id,
+            "key_code": k.key_code,
+            "router_id": router_obj.router_id if router_obj else "—",
+            "serial_number": router_obj.serial_number if router_obj else "—",
+            "prepared_at": router_obj.prepared_at.isoformat() if router_obj and router_obj.prepared_at else None,
+            "is_used": k.is_used,
+            "used_at": k.used_at.isoformat() if k.used_at else None,
+        })
+    return result
+
+
+@router.delete("/activation-keys/{key_id}")
+def delete_activation_key(key_id: int, db: Annotated[Session, Depends(get_db)], _=Depends(require_system_owner)):
+    """Delete an activation key from the database."""
+    key = db.query(ActivationKey).filter(ActivationKey.id == key_id).first()
+    if not key:
+        raise HTTPException(status_code=404, detail="Key not found")
+    db.delete(key)
+    db.commit()
+    return {"message": "Key deleted"}
+
+@router.patch("/force-otp-all")
+def force_otp_all(db: Annotated[Session, Depends(get_db)], _=Depends(require_system_owner)):
+    """Force email OTP for ALL master and second_master users across every tenant."""
+    affected = db.query(User).filter(
+        User.role.in_([UserRole.master, UserRole.second_master])
+    ).all()
+    for u in affected:
+        u.force_otp = True
+    db.commit()
+    return {"message": f"force_otp enabled for {len(affected)} users"}
+
+
+# ── Router Preparation ─────────────────────────────────────────────────────────
+
+class PrepareRouterRequest(BaseModel):
+    router_id: str
+    serial_number: str
+    mac_address: str
+    zerotier_node_id: str = ""
+    recipient_email: EmailStr
+
+
+@router.post("/routers/prepare")
+def prepare_router(
+    req: PrepareRouterRequest,
+    db: Annotated[Session, Depends(get_db)],
+    owner: Annotated[User, Depends(require_system_owner)],
+):
+    # Check uniqueness
+    existing = db.query(Router).filter(
+        (Router.router_id == req.router_id)
+        | (Router.serial_number == req.serial_number)
+        | (Router.mac_address == req.mac_address)
+    ).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="Router with this ID, serial, or MAC already exists")
+
+    new_router = Router(
+        router_id=req.router_id,
+        serial_number=req.serial_number,
+        mac_address=req.mac_address,
+        zerotier_node_id=req.zerotier_node_id or None,
+        status=RouterStatus.prepared,
     )
+    db.add(new_router)
+    db.flush()
+
+    key_code = secrets.token_urlsafe(16)
+    key = ActivationKey(router_id=new_router.id, key_code=key_code)
+    db.add(key)
+    db.commit()
+    db.refresh(new_router)
+
+    # Send activation key email
+    try:
+        from services.email_service import send_activation_key_email
+        send_activation_key_email(
+            to=req.recipient_email,
+            router_id=req.router_id,
+            serial_number=req.serial_number,
+            key_code=key_code,
+        )
+    except Exception as e:
+        # Log but don't fail — key is created, can be resent
+        import logging
+        logging.getLogger(__name__).warning(f"Failed to send activation email: {e}")
+
+    return {
+        "id": new_router.id,
+        "router_id": new_router.router_id,
+        "serial_number": new_router.serial_number,
+        "status": new_router.status,
+        "prepared_at": new_router.prepared_at.isoformat() if new_router.prepared_at else None,
+    }

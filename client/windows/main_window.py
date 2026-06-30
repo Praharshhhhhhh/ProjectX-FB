@@ -13,14 +13,8 @@ try:
 except ImportError:
     # pyrefly: ignore [missing-import]
     from styles import APP_STYLE, SIDEBAR_W, LEVEL_COLORS
-# pyrefly: ignore [missing-import]
-from config import TUNNEL_MODE
-if TUNNEL_MODE == "wireguard":
-    # pyrefly: ignore [missing-import]
-    from services.wireguard_local import is_wireguard_running as is_tunnel_running
-else:
-    # pyrefly: ignore [missing-import]
-    from services.zerotier_local import is_zerotier_running as is_tunnel_running
+def is_tunnel_running():
+    return True
 # pyrefly: ignore [missing-import]
 from services.network_monitor import NetworkMonitor
 # pyrefly: ignore [missing-import]
@@ -44,20 +38,12 @@ class DashboardPage(QWidget):
     add_user_requested = pyqtSignal()
     manage_devices_requested = pyqtSignal()
     manage_users_requested = pyqtSignal()
-    view_logs_requested = pyqtSignal()
 
     def __init__(self, api, user: dict):
         super().__init__()
         self.api = api
         self.user = user
         self._build()
-        # pyrefly: ignore [missing-import]
-        from services.websocket_client import ws_client
-        ws_client.alert_received.connect(self._show_ws_alert)
-
-    def _show_ws_alert(self, message: str):
-        if hasattr(self, "_alert"):
-            self._alert.show_error(message)
 
     def _build(self):
         scroll = QScrollArea()
@@ -75,10 +61,10 @@ class DashboardPage(QWidget):
         is_master = role in ("master", "second_master")
         tenant = self.user.get("company") or ""
         network = self.user.get("network_id") or ""
-        subtitle = f"{tenant}  ·  Network: {network}" if network else tenant
+        subtitle = f"Role: {role.replace('_', ' ').title()}"
 
         hdr_row = QHBoxLayout()
-        hdr = PageHeader("Master Dashboard", subtitle)
+        hdr = PageHeader("SetuLink Dashboard", subtitle)
         hdr_row.addWidget(hdr, 1)
         if is_master:
             add_btn = QPushButton("+ Add User")
@@ -90,10 +76,10 @@ class DashboardPage(QWidget):
         lay.addLayout(hdr_row)
 
         stats_row = QHBoxLayout(); stats_row.setSpacing(16)
-        self._s_online  = StatCard("Online Devices",    "—", color="#16a34a", icon_path=asset_path(ICON_MONITOR))
-        self._s_pending = StatCard("Pending Approval",  "—", color="#ea580c", icon_path=asset_path("clock.svg"))
+        self._s_online  = StatCard("Claimed Routers",    "—", color="#16a34a", icon_path=asset_path(ICON_MONITOR))
+        self._s_pending = StatCard("Pending Sync",  "—", color="#ea580c", icon_path=asset_path("clock.svg"))
         self._s_users   = StatCard("Total Users",       "—", color="#2563eb", icon_path=asset_path(ICON_USERS))
-        self._s_offline = StatCard("Offline Devices",   "—", color="#dc2626", icon_path=asset_path("wifi-off.svg"))
+        self._s_offline = StatCard("Pending Sync",   "—", color="#dc2626", icon_path=asset_path("wifi-off.svg"))
         
         cards_to_add = [self._s_online]
         if is_master:
@@ -105,8 +91,8 @@ class DashboardPage(QWidget):
             stats_row.addWidget(c)
         lay.addLayout(stats_row)
 
-        # Devices
-        self._dev_card = CardWithHeader("Active Devices", "Manage All")
+        # Routers
+        self._dev_card = CardWithHeader("Routers", "Manage All")
         if self._dev_card.action_btn:
             self._dev_card.action_btn.clicked.connect(self.manage_devices_requested.emit)
         self._dev_list = QWidget(); self._dev_list.setStyleSheet("background:white")
@@ -131,20 +117,8 @@ class DashboardPage(QWidget):
         self._users_card.add_widget(self._users_list)
         if is_master:
             bottom.addWidget(self._users_card, alignment=Qt.AlignmentFlag.AlignTop)
+            lay.addLayout(bottom)
 
-        # Activity
-        self._act_card = CardWithHeader("Activity Log", "Full Log")
-        if self._act_card.action_btn:
-            self._act_card.action_btn.clicked.connect(self.view_logs_requested.emit)
-        self._act_list = QWidget(); self._act_list.setStyleSheet("background:white")
-        self._act_vlay = QVBoxLayout(self._act_list)
-        self._act_vlay.setContentsMargins(0, 0, 0, 0)
-        self._act_vlay.setSpacing(0)
-        self._act_vlay.addStretch()
-        self._act_card.add_widget(self._act_list)
-        bottom.addWidget(self._act_card, alignment=Qt.AlignmentFlag.AlignTop)
-
-        lay.addLayout(bottom)
         lay.addStretch()
 
         scroll.setWidget(inner)
@@ -156,27 +130,26 @@ class DashboardPage(QWidget):
         role = self.user.get("role", "")
         is_master = role in ("master", "second_master")
         self._w = Worker(lambda: (
-            self.api.get_devices(),
-            self.api.get_pending_devices() if is_master else [],
+            self.api.get_routers(),
+            [],
             self.api.get_users() if is_master else [],
-            self.api.get_audit_logs(),
         ))
         self._w.result.connect(self._on_data)
         self._w.error.connect(lambda e: print("Dashboard error:", e))
         self._w.start()
 
     def _on_data(self, data):
-        devices, pending, users, logs = data
-        active = [d for d in devices if d.get("is_approved") and d.get("status") == "active"]
-        offline = [d for d in devices if d.get("is_approved") and d.get("status") == "offline"]
+        routers, pending, users = data
+        active = [r for r in routers if r.get("status") == "claimed"]
+        offline = [r for r in routers if r.get("status") == "pending_validation"]
         self._s_online.set_value(len(active))
-        self._s_pending.set_value(len(pending))
+        self._s_pending.set_value(len(offline))
         self._s_users.set_value(len(users))
         self._s_offline.set_value(len(offline))
 
         self._fill_list(self._dev_vlay, [
-            {"main": d.get("name", ""), "sub": f"LAN: {d.get('lan_ip','—')} · {d.get('connection_info', {}).get('tunnel_type', 'zerotier')[:2].upper()}: {d.get('connection_info', {}).get('virtual_ip', '—')}",
-             "dot": d.get("status", "offline")} for d in devices[:5]
+            {"main": r.get("name", ""), "sub": f"Serial: {r.get('serial_number','—')} · MAC: {r.get('mac_address','—')}",
+             "dot": "active" if r.get("status") == "claimed" else "connecting"} for r in routers[:5]
         ], dot=True)
 
         if users:
@@ -184,13 +157,6 @@ class DashboardPage(QWidget):
                 {"main": u.get("full_name", ""), "badge": u.get("role", ""), "badge_type": "role"}
                 for u in users[:5]
             ])
-
-        self._fill_list(self._act_vlay, [
-            {"main": l.get("description", ""),
-             "sub": f"By {l.get('user_name','System')} · {_fmt_date(l.get('created_at',''))}",
-             "level": l.get("level","info")}
-            for l in logs[:6]
-        ], level=True)
 
     def _fill_list(self, vlay, items, dot=False, level=False):
         while vlay.count() > 1:
@@ -249,64 +215,86 @@ class DashboardPage(QWidget):
 # ═══════════════════════════════════════════════════════════════════════════════
 #  DEVICES PAGE
 # ═══════════════════════════════════════════════════════════════════════════════
+class ClaimDialog(QDialog):
+    def __init__(self, api, parent=None):
+        super().__init__(parent)
+        self.api = api
+        self.setWindowTitle("Claim Prepared Router")
+        self.setFixedSize(380, 240)
+        self.setStyleSheet("QDialog{background:#f1f5f9;} QLabel{background:transparent;color:#0f172a;} QLineEdit{background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:8px;font-size:13px;color:#0f172a;}")
+        self._build_ui()
+
+    def _build_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(24, 20, 24, 20)
+        layout.setSpacing(10)
+
+        title = QLabel("Claim Router")
+        title.setStyleSheet("font-size:15px;font-weight:700;color:#0f172a;")
+        layout.addWidget(title)
+
+        self.serial_input = QLineEdit()
+        self.serial_input.setPlaceholderText("Serial Number (e.g. SN-XXXX)")
+        layout.addWidget(self.serial_input)
+
+        self.key_input = QLineEdit()
+        self.key_input.setPlaceholderText("Activation Key Code")
+        layout.addWidget(self.key_input)
+
+        layout.addSpacing(10)
+        buttons = QHBoxLayout()
+        self.cancel_btn = QPushButton("Cancel")
+        self.cancel_btn.setStyleSheet("QPushButton{background:white;color:#475569;border:1px solid #cbd5e1;border-radius:6px;padding:6px 16px;} QPushButton:hover{background:#f1f5f9;}")
+        self.cancel_btn.clicked.connect(self.reject)
+        self.claim_btn = QPushButton("Claim Router")
+        self.claim_btn.setStyleSheet("QPushButton{background:#2563eb;color:white;border:none;border-radius:6px;padding:6px 16px;font-weight:bold;} QPushButton:hover{background:#1d4ed8;}")
+        self.claim_btn.clicked.connect(self.accept)
+
+        buttons.addWidget(self.cancel_btn)
+        buttons.addWidget(self.claim_btn)
+        layout.addLayout(buttons)
+
+class RenameDialog(QDialog):
+    def __init__(self, current_name, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Rename Router")
+        self.setFixedSize(360, 160)
+        self.setStyleSheet("QDialog{background:#f1f5f9;} QLabel{background:transparent;color:#0f172a;} QLineEdit{background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:8px;font-size:13px;color:#0f172a;}")
+        self._build_ui(current_name)
+
+    def _build_ui(self, current_name):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(24, 20, 24, 20)
+        layout.setSpacing(10)
+
+        title = QLabel("Rename Router")
+        title.setStyleSheet("font-size:14px;font-weight:700;color:#0f172a;")
+        layout.addWidget(title)
+
+        self.name_input = QLineEdit()
+        self.name_input.setText(current_name)
+        self.name_input.setPlaceholderText("New Name")
+        layout.addWidget(self.name_input)
+
+        layout.addSpacing(6)
+        buttons = QHBoxLayout()
+        self.cancel_btn = QPushButton("Cancel")
+        self.cancel_btn.setStyleSheet("QPushButton{background:white;color:#475569;border:1px solid #cbd5e1;border-radius:6px;padding:6px 16px;} QPushButton:hover{background:#f1f5f9;}")
+        self.cancel_btn.clicked.connect(self.reject)
+        self.save_btn = QPushButton("Save")
+        self.save_btn.setStyleSheet("QPushButton{background:#2563eb;color:white;border:none;border-radius:6px;padding:6px 16px;font-weight:bold;} QPushButton:hover{background:#1d4ed8;}")
+        self.save_btn.clicked.connect(self.accept)
+
+        buttons.addWidget(self.cancel_btn)
+        buttons.addWidget(self.save_btn)
+        layout.addLayout(buttons)
+
 class DevicesPage(QWidget):
     def __init__(self, api, user: dict):
         super().__init__()
         self.api = api
         self.user = user
         self._build()
-        # pyrefly: ignore [missing-import]
-        from services.websocket_client import ws_client
-        ws_client.device_updated.connect(self._safe_refresh)
-        ws_client.device_removed.connect(self._safe_refresh)
-        ws_client.sync_toggle_received.connect(self._on_sync_toggle)
-        ws_client.lan_device_renamed.connect(self._on_lan_device_renamed)
-
-    def _safe_refresh(self, *args):
-        try:
-            self.refresh()
-        except RuntimeError:
-            pass
-
-
-    def _on_sync_toggle(self, device_id: int, network_id: str, connect: bool):
-        # We need to find the DeviceCard for this device_id
-        if not hasattr(self, "_dev_layout"):
-            return
-        for i in range(self._dev_layout.count()):
-            item = self._dev_layout.itemAt(i)
-            if item and item.widget():
-                w = item.widget()
-                # pyrefly: ignore [missing-attribute]
-                if hasattr(w, "device") and w.device.get("id") == device_id:
-                    # Sync the toggle visually and locally connect
-                    if w.toggle_sw.isChecked() != connect:
-                        w.toggle_sw.setChecked(connect)
-                        
-                        from services.tunnel_manager import TunnelManager
-                        is_local = TunnelManager.is_local_device(w.device)
-                        
-                        if is_local:
-                            w._on_toggle(connect, is_sync=True)
-                        else:
-                            w._update_status("connecting" if connect else "disconnected")
-                    break
-
-    def _on_lan_device_renamed(self, device_id: int, lan_device_id: int, new_name: str):
-        if not hasattr(self, "_dev_layout"):
-            return
-        for i in range(self._dev_layout.count()):
-            item = self._dev_layout.itemAt(i)
-            if item and item.widget():
-                w = item.widget()
-                if hasattr(w, "device") and w.device.get("id") == device_id:
-                    for lan in w.device.get("lan_devices", []):
-                        if lan.get("id") == lan_device_id:
-                            lan["name"] = new_name
-                            # pyrefly: ignore [missing-attribute]
-                            w._rebuild_expanded_panel()
-                            break
-                    break
 
     def _build(self):
         lay = QVBoxLayout(self)
@@ -315,312 +303,162 @@ class DevicesPage(QWidget):
 
         self._alert = AlertBar()
         lay.addWidget(self._alert)
-        tun_name = "WireGuard" if TUNNEL_MODE == "wireguard" else "ZeroTier"
-        lay.addWidget(PageHeader("Devices", f"All devices on your {tun_name} network"))
+        lay.addWidget(PageHeader("Routers", "All claimed and pending routers for your tenant"))
 
         role = self.user.get("role", "")
         is_master = role in ("master", "second_master")
 
         stats_row = QHBoxLayout(); stats_row.setSpacing(16)
-        self._s_online  = StatCard("Online",     "—", color="#16a34a", icon_path=asset_path(ICON_MONITOR))
-        self._s_conn    = StatCard("Connecting", "—", color="#d97706", icon_path=asset_path("refresh.svg"))
-        self._s_offline = StatCard("Offline",    "—", color="#dc2626", icon_path=asset_path("wifi-off.svg"))
-        self._s_waiting = StatCard("Waiting",    "—", color="#2563eb", icon_path=asset_path("clock.svg"))
+        self._s_online  = StatCard("Claimed",     "—", color="#16a34a", icon_path=asset_path(ICON_MONITOR))
+        self._s_conn    = StatCard("Pending Sync", "—", color="#d97706", icon_path=asset_path("clock.svg"))
+        self._s_offline = StatCard("Offline Queue",    "—", color="#dc2626", icon_path=asset_path("wifi-off.svg"))
         
         cards_to_add = [self._s_online, self._s_conn, self._s_offline]
-        if is_master:
-            cards_to_add.append(self._s_waiting)
-            
         for c in cards_to_add:
             c.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
             stats_row.addWidget(c)
         lay.addLayout(stats_row)
 
-        # Auto-reconnect banner
-        banner = QLabel("↻  Auto-reconnect enabled — connections restore automatically if your network changes")
-        banner.setStyleSheet("background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe;border-radius:8px;padding:10px 14px;font-size:13px")
-        lay.addWidget(banner)
-        
-        if is_master:
-            mode_lay = QHBoxLayout()
-            mode_lay.addWidget(QLabel("<b>Network Routing Mode:</b>"))
-            self.mode_combo = QComboBox()
-            self.mode_combo.addItems(["Layer 3 (Routed - Default)", "Layer 2 (Bridged - Broadcasts)"])
-            self.mode_combo.setStyleSheet("QComboBox{background:white;border:1px solid #cbd5e1;border-radius:6px;padding:4px;font-size:13px;}")
-            self.mode_combo.currentIndexChanged.connect(self._change_network_mode)
-            mode_lay.addWidget(self.mode_combo)
-            mode_lay.addStretch()
-            lay.addLayout(mode_lay)
-
-        self.card = CardWithHeader("Active Devices")
+        self.card = CardWithHeader("Routers List", "+ Claim Router" if is_master else "")
         self.card.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
-        if is_master:
-            headers = ["Device Name", "LAN IP", "Tunnel IP", "Network", "Status", "Actions"]
-            self._tbl = make_table(headers)
-            self._tbl.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-            self._tbl.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-            hh = self._tbl.horizontalHeader()
-            for col in range(6):
-                hh.setSectionResizeMode(col, QHeaderView.ResizeMode.Fixed)
-            hh.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-            self._tbl.setColumnWidth(0, 200)
-            self._tbl.setColumnWidth(1, 130)
-            self._tbl.setColumnWidth(2, 200)
-            self._tbl.setColumnWidth(3, 160)
-            self._tbl.setColumnWidth(4, 90)
-            self._tbl.setColumnWidth(5, 300)
-            self.card.add_widget(self._tbl)
-        else:
-            self._dev_scroll = QScrollArea()
-            self._dev_scroll.setWidgetResizable(True)
-            self._dev_scroll.setFrameShape(QFrame.Shape.NoFrame)
-            self._dev_scroll.setMinimumHeight(450)
-            self._dev_scroll.setStyleSheet("background:transparent;border:none")
-            self._dev_container = QWidget()
-            self._dev_container.setStyleSheet("background:transparent")
-            self._dev_layout = QVBoxLayout(self._dev_container)
-            self._dev_layout.setContentsMargins(16, 12, 16, 12)
-            self._dev_layout.setSpacing(10)
-            self._dev_layout.addStretch()
-            self._dev_scroll.setWidget(self._dev_container)
-            self.card.add_widget(self._dev_scroll)
-        lay.addWidget(self.card,1)
-        lay.addStretch()
+        if self.card.action_btn:
+            self.card.action_btn.clicked.connect(self._show_claim_dialog)
 
-    def _change_network_mode(self, index: int):
-        is_layer2 = (index == 1)
-        devices = getattr(self, "_devices", [])
-        for d in devices:
-            if d.get("network_id") and not d.get("is_shared"):
-                self._nw = Worker(self.api.change_network_mode, d["id"], is_layer2)
-                self._nw.result.connect(lambda _: None)
-                self._nw.error.connect(lambda e: print("Mode change failed:", e))
-                self._nw.start()
-                break
+        headers = ["ID", "Router ID", "Name", "Serial Number", "MAC Address", "Status", "Actions"]
+        self._tbl = make_table(headers)
+        self._tbl.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._tbl.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        hh = self._tbl.horizontalHeader()
+        for col in range(7):
+            hh.setSectionResizeMode(col, QHeaderView.ResizeMode.Interactive)
+        hh.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        self._tbl.setColumnWidth(0, 50)
+        self._tbl.setColumnWidth(1, 130)
+        self._tbl.setColumnWidth(3, 140)
+        self._tbl.setColumnWidth(4, 140)
+        self._tbl.setColumnWidth(5, 120)
+        self._tbl.setColumnWidth(6, 250)
+        self.card.add_widget(self._tbl)
+        lay.addWidget(self.card, 1)
+        lay.addStretch()
 
     def refresh(self):
         if hasattr(self, "_w"):
             try:
                 if self._w.isRunning():
-                    return  # Wait for current refresh to finish
+                    return
             except RuntimeError:
                 pass
-        
-        role = self.user.get("role", "")
-        is_master = role in ("master", "second_master")
-        self._w = Worker(lambda: (
-            self.api.get_devices(),
-            self.api.get_pending_devices() if is_master else []
-        ))
+        self._w = Worker(self.api.get_routers)
         self._w.result.connect(self._on_data)
         self._w.error.connect(self._alert.show_error)
         self._w.start()
 
-    def _on_data(self, data):
-        devices, pending = data
-        self._devices = devices
-        self._s_online.set_value(len([d for d in devices if d.get("status") == "active"]))
-        self._s_conn.set_value(len([d for d in devices if d.get("status") == "connecting"]))
-        self._s_offline.set_value(len([d for d in devices if d.get("status") == "offline"]))
-        role = self.user.get("role", "")
-        is_master = role in ("master", "second_master")
-        if is_master:
-            self._s_waiting.set_value(len(pending))
-
-        all_devs = [{"_pending": True, **p} for p in pending] + [d for d in devices if d.get("is_approved")]
-
-        if is_master:
-            t = self._tbl
-            t.setUpdatesEnabled(False)
-            t.setRowCount(0)
-            for dev in all_devs:
-                r = t.rowCount(); t.insertRow(r)
-                name = dev.get("name", dev.get("zerotier_node_id", "Unknown"))
-                if dev.get("_pending"):
-                    # pyrefly: ignore [unsupported-operation]
-                    name += "  [Pending]"
-                
-                name_w = QWidget()
-                name_l = QHBoxLayout(name_w)
-                name_l.setContentsMargins(0, 0, 0, 0)
-                name_l.setSpacing(6)
-                name_l.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                name_lbl = QLabel(name)
-                name_lbl.setStyleSheet("background:transparent; border:none;")
-                name_l.addWidget(name_lbl)
-                
-                if dev.get("has_conflict"):
-                    conflict_lbl = QLabel("Overmapping Conflict")
-                    conflict_lbl.setStyleSheet("background:#fee2e2;color:#ef4444;padding:2px 4px;border-radius:4px;font-size:10px;font-weight:bold;")
-                    name_l.addWidget(conflict_lbl)
-                t.setCellWidget(r, 0, name_w)
-                
-                lan_ip_val = dev.get("lan_ip") or "—"
-                if lan_ip_val != "—":
-                    # pyrefly: ignore [no-matching-overload]
-                    ip_btn = QPushButton(lan_ip_val)
-                    ip_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-                    ip_btn.setStyleSheet("""
-                        QPushButton { background: transparent; color: #2563eb; border: none; font-size: 13px; text-align: left; padding-left: 2px; }
-                        QPushButton:hover { color: #1d4ed8; text-decoration: underline; }
-                    """)
-                    ip_btn.clicked.connect(lambda _, a=lan_ip_val: QDesktopServices.openUrl(QUrl(f"http://{a}")))
-                    ip_container = QWidget()
-                    ip_lay = QHBoxLayout(ip_container)
-                    ip_lay.setContentsMargins(0, 0, 0, 0)
-                    ip_lay.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                    ip_lay.addWidget(ip_btn)
-                    t.setCellWidget(r, 1, ip_container)
-                else:
-                    t.setItem(r, 1, table_item("—", Qt.AlignmentFlag.AlignCenter))
-
-                conn_info = dev.get("connection_info", {})
-                ttype = conn_info.get("tunnel_type", "zerotier")
-                tun_ip = conn_info.get("virtual_ip") or "—"
-                badge = "WG" if ttype == "wireguard" else "ZT"
-                t.setItem(r, 2, table_item(f"[{badge}] {tun_ip}", Qt.AlignmentFlag.AlignCenter))
-                
-                t.setItem(r, 3, table_item(dev.get("network_id") or "—", Qt.AlignmentFlag.AlignCenter))
-                status = "pending" if dev.get("_pending") else dev.get("status", "offline")
-                # pyrefly: ignore [missing-attribute]
-                t.setItem(r, 4, table_item(status.title(), Qt.AlignmentFlag.AlignCenter))
-
-                btn_w = QWidget()
-                btn_l = QHBoxLayout(btn_w)
-                btn_l.setContentsMargins(4, 4, 4, 4)
-                btn_l.setSpacing(4)
-                if dev.get("_pending"):
-                    appr = QPushButton("Approve")
-                    appr.setObjectName("btn-sm")
-                    appr.setStyleSheet("QPushButton{background:#dcfce7;color:#15803d;border:1px solid #bbf7d0;border-radius:6px;padding:5px 12px;font-size:13px} QPushButton:hover{background:#bbf7d0}")
-                    appr.setFixedSize(75, 28)
-                    appr.clicked.connect(lambda _, did=dev["id"]: self._approve(did))
-                    btn_l.addWidget(appr)
-                    
-                    rej = QPushButton("Reject")
-                    rej.setObjectName("btn-danger")
-                    rej.setStyleSheet("QPushButton{background:#fee2e2;color:#ef4444;border:1px solid #fecaca;border-radius:6px;padding:5px 12px;font-size:13px} QPushButton:hover{background:#fecaca}")
-                    rej.setFixedSize(75, 28)
-                    rej.clicked.connect(lambda _, did=dev["id"]: self._remove(did))
-                    btn_l.addWidget(rej)
-                else:
-                    if not dev.get("is_shared"):
-                        share_btn = QPushButton("Share")
-                        share_btn.setObjectName("btn-sm")
-                        share_btn.setStyleSheet("QPushButton{background:#dbeafe;color:#1d4ed8;border:1px solid #bfdbfe;border-radius:6px;padding:5px 12px;font-size:13px} QPushButton:hover{background:#bfdbfe}")
-                        share_btn.setFixedSize(65, 30)
-                        share_btn.clicked.connect(lambda _, did=dev["id"], nm=dev.get("name", ""): self._open_share_dialog(did, nm))
-                        btn_l.addWidget(share_btn)
-
-                        shares_btn = QPushButton("Shares")
-                        shares_btn.setObjectName("btn-sm")
-                        shares_btn.setStyleSheet("QPushButton{background:#f3f4f6;color:#374151;border:1px solid #e5e7eb;border-radius:6px;padding:5px 12px;font-size:13px} QPushButton:hover{background:#e5e7eb}")
-                        shares_btn.setFixedSize(70, 30)
-                        shares_btn.clicked.connect(lambda _, did=dev["id"], nm=dev.get("name", ""): self._open_shares_view(did, nm))
-                        btn_l.addWidget(shares_btn)
-                    
-                    dl_btn = QPushButton("↓")
-                    dl_btn.setObjectName("btn-sm")
-                    dl_btn.setStyleSheet("QPushButton{background:#f1f5f9;color:#0f172a;border:1px solid #cbd5e1;border-radius:6px;padding:5px 8px;font-size:14px;font-weight:bold;} QPushButton:hover{background:#e2e8f0}")
-                    dl_btn.setFixedSize(30, 30)
-                    dl_btn.setToolTip("Download .conf")
-                    dl_btn.clicked.connect(lambda _, did=dev["id"], nm=dev.get("name", "wg_client"): self._download_conf(did, nm))
-                    btn_l.addWidget(dl_btn)
-                    
-                    rem = QPushButton("Remove")
-                    rem.setObjectName("btn-danger")
-                    rem.setFixedSize(75, 30)
-                    rem.clicked.connect(lambda _, did=dev["id"]: self._remove(did))
-                    btn_l.addWidget(rem)
-                t.setCellWidget(r, 5, btn_w)
-            t.setUpdatesEnabled(True)
-        else:
-            existing_cards = {}
-            for i in range(self._dev_layout.count()):
-                item = self._dev_layout.itemAt(i)
-                if item and item.widget():
-                    w = item.widget()
-                    # pyrefly: ignore [missing-attribute]
-                    if hasattr(w, "device"):
-                        existing_cards[w.device["id"]] = w
-            
-            approved_devs = [d for d in devices if d.get("is_approved")]
-            approved_ids = {d["id"] for d in approved_devs}
-            
-            for dev_id, w in existing_cards.items():
-                if dev_id not in approved_ids:
-                    w.deleteLater()
-            
-            # pyrefly: ignore [missing-import]
-            from widgets.device_card import DeviceCard
-            for dev in approved_devs:
-                if dev["id"] in existing_cards:
-                    existing_cards[dev["id"]].update_data(dev)
-                else:
-                    card = DeviceCard(dev, self.api, user=self.user)
-                    self._dev_layout.insertWidget(self._dev_layout.count() - 1, card)
-            
-            pass
-        if is_master:
-            row_height = 50
-            header_height = 42
-            num_rows = len(all_devs)
-            total_height = header_height + (num_rows * row_height) + 2
-            self._tbl.setFixedHeight(total_height)
-
-    def _approve(self, did: int):
-        self._aw = Worker(self.api.approve_device, did)
-        self._aw.result.connect(lambda _: (self.refresh(), self._alert.show_success("Device approved")))
-        self._aw.error.connect(self._alert.show_error)
-        self._aw.start()
-
-    def _remove(self, did: int):
-        def do_delete(totp_code):
-            self._rw = Worker(self.api.remove_device, did, totp_code)
-            self._rw.result.connect(lambda _: (self.refresh(), self._alert.show_success("Device removed")))
-            self._rw.error.connect(self._alert.show_error)
-            self._rw.start()
-
-        user_info = {}
-        p = self
-        while p:
-            if hasattr(p, "user"): user_info = p.user; break
-            p = p.parent()
-        _prompt_sensitive_action(
-            self, user_info, "Remove Device",
-            "Please confirm device removal",
-            do_delete
-        )
-
-    def _open_share_dialog(self, did: int, name: str):
-        dlg = ShareDeviceDialog(did, name, self.api, self)
-        if dlg.exec() == QDialog.DialogCode.Accepted:
-            self.refresh()
-
-    def _download_conf(self, did: int, name: str):
-        from PyQt6.QtWidgets import QFileDialog
-        import re
-        safe_name = re.sub(r'[^a-zA-Z0-9_-]', '_', name)
-        path, _ = QFileDialog.getSaveFileName(self, "Save WireGuard Config", f"{safe_name}.conf", "Conf Files (*.conf)")
-        if not path:
-            return
-            
-        self._dl_w = Worker(self.api.download_conf, did)
-        self._dl_w.result.connect(lambda data, p=path: self._save_conf_file(data, p))
-        self._dl_w.error.connect(self._alert.show_error)
-        self._dl_w.start()
+    def _on_data(self, routers: list):
+        self._routers = routers
+        claimed = [r for r in routers if r.get("status") == "claimed"]
+        pending = [r for r in routers if r.get("status") == "pending_validation"]
         
-    def _save_conf_file(self, data: str, path: str):
-        try:
-            with open(path, "w") as f:
-                f.write(data)
-            self._alert.show_success("Config downloaded successfully")
-        except Exception as e:
-            self._alert.show_error(f"Failed to save: {e}")
+        self._s_online.set_value(len(claimed))
+        self._s_conn.set_value(len(pending))
+        
+        # Get offline queue length
+        from services.cache_service import cache_service
+        actions = cache_service.get_offline_actions()
+        self._s_offline.set_value(len(actions))
 
-    def _open_shares_view(self, did: int, name: str):
-        dlg = ViewSharesDialog(did, name, self.api, self)
-        dlg.exec()
+        t = self._tbl
+        t.setUpdatesEnabled(False)
+        t.setRowCount(0)
+        
+        for r in routers:
+            row_idx = t.rowCount()
+            t.insertRow(row_idx)
+            t.setItem(row_idx, 0, table_item(str(r.get("id"))))
+            t.setItem(row_idx, 1, table_item(r.get("router_id", "—")))
+            t.setItem(row_idx, 2, table_item(r.get("name", "—")))
+            t.setItem(row_idx, 3, table_item(r.get("serial_number", "—")))
+            t.setItem(row_idx, 4, table_item(r.get("mac_address", "—")))
+            
+            # Status badge
+            status = r.get("status", "pending_validation")
+            bg, fg = ("#dcfce7", "#166534") if status == "claimed" else ("#fef3c7", "#92400e")
+            badge = Badge(status.replace("_", " ").title(), bg, fg)
+            status_w = QWidget()
+            sl = QHBoxLayout(status_w)
+            sl.setContentsMargins(6, 6, 6, 6)
+            sl.addWidget(badge)
+            sl.addStretch()
+            t.setCellWidget(row_idx, 5, status_w)
+
+            # Actions row
+            btn_w = QWidget()
+            btn_l = QHBoxLayout(btn_w)
+            btn_l.setContentsMargins(4, 4, 4, 4)
+            btn_l.setSpacing(6)
+
+            rename = QPushButton("Rename")
+            rename.setStyleSheet("QPushButton{background:white;color:#374151;border:1px solid #cbd5e1;border-radius:6px;padding:4px 10px;font-size:12px} QPushButton:hover{background:#f3f4f6}")
+            rename.clicked.connect(lambda _, rid=r["id"], nm=r.get("name",""): self._rename(rid, nm))
+            btn_l.addWidget(rename)
+
+            if status == "pending_validation":
+                sync = QPushButton("Sync")
+                sync.setStyleSheet("QPushButton{background:#dcfce7;color:#15803d;border:1px solid #bbf7d0;border-radius:6px;padding:4px 10px;font-size:12px} QPushButton:hover{background:#bbf7d0}")
+                sync.clicked.connect(lambda _, rid=r["id"]: self._sync(rid))
+                btn_l.addWidget(sync)
+            else:
+                share = QPushButton("Share")
+                share.setStyleSheet("QPushButton{background:#dbeafe;color:#1d4ed8;border:1px solid #bfdbfe;border-radius:6px;padding:4px 10px;font-size:12px} QPushButton:hover{background:#bfdbfe}")
+                share.clicked.connect(lambda _, rid=r["id"]: self._share(rid))
+                btn_l.addWidget(share)
+
+            btn_l.addStretch()
+            t.setCellWidget(row_idx, 6, btn_w)
+            
+        t.setUpdatesEnabled(True)
+
+        row_height = 54
+        header_height = 42
+        num_rows = len(routers)
+        total_height = header_height + (num_rows * row_height) + 2
+        t.setFixedHeight(total_height)
+
+    def _show_claim_dialog(self):
+        dlg = ClaimDialog(self.api, self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            serial = dlg.serial_input.text().strip()
+            key = dlg.key_input.text().strip()
+            if not serial or not key:
+                return
+            self._cw = Worker(self.api.claim_router, serial, key)
+            self._cw.result.connect(lambda _: (self.refresh(), self._alert.show_success("Router claimed successfully")))
+            self._cw.error.connect(self._alert.show_error)
+            self._cw.start()
+
+    def _rename(self, rid: int, current_name: str):
+        dlg = RenameDialog(current_name, self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            new_name = dlg.name_input.text().strip()
+            if not new_name:
+                return
+            self._rnw = Worker(self.api.rename_router, rid, new_name)
+            self._rnw.result.connect(lambda _: (self.refresh(), self._alert.show_success("Router rename queued")))
+            self._rnw.error.connect(self._alert.show_error)
+            self._rnw.start()
+
+    def _sync(self, rid: int):
+        self._syw = Worker(self.api.sync_router, rid)
+        self._syw.result.connect(lambda _: (self.refresh(), self._alert.show_success("Router sync complete")))
+        self._syw.error.connect(self._alert.show_error)
+        self._syw.start()
+
+    def _share(self, rid: int):
+        self._shw = Worker(self.api.share_router, rid)
+        self._shw.result.connect(lambda _: (self.refresh(), self._alert.show_success("Router shared successfully")))
+        self._shw.error.connect(self._alert.show_error)
+        self._shw.start()
+
 
 class ShareDeviceDialog(QDialog):
     def __init__(self, device_id: int, device_name: str, api, parent=None):
@@ -1077,11 +915,11 @@ class UsersPage(QWidget):
         lay.addLayout(stats_row)
 
         card = CardWithHeader("Team Members")
-        self._tbl = make_table(["NAME", "EMAIL", "ROLE", "2FA", "TRUSTED", "DEVICE ACCESS", "ACTIONS"])
+        self._tbl = make_table(["NAME", "EMAIL", "ROLE", "2FA", "TRUSTED", "ACTIONS"])
         self._tbl.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self._tbl.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         hh = self._tbl.horizontalHeader()
-        for c in range(7):
+        for c in range(6):
             hh.setSectionResizeMode(c, QHeaderView.ResizeMode.Interactive)
         hh.setStretchLastSection(True)
         
@@ -1090,8 +928,7 @@ class UsersPage(QWidget):
         self._tbl.setColumnWidth(2, 120) # ROLE
         self._tbl.setColumnWidth(3, 150)  # 2FA
         self._tbl.setColumnWidth(4, 125) # TRUSTED
-        self._tbl.setColumnWidth(5, 135) # DEVICE ACCESS
-        self._tbl.setColumnWidth(6, 320) # ACTIONS
+        self._tbl.setColumnWidth(5, 320) # ACTIONS
         card.add_widget(self._tbl)
         lay.addWidget(card)
         lay.addStretch()
@@ -1186,20 +1023,8 @@ class UsersPage(QWidget):
         tr_l.addWidget(tr_lbl); tr_l.addStretch()
         t.setCellWidget(r, 4, tr_w)
 
-        da_w = QWidget()
-        da_l = QHBoxLayout(da_w)
-        da_l.setContentsMargins(8, 4, 8, 4)
-        if role in ("master", "second_master", "trusted") or u.get("is_trusted"):
-            da_lbl = QLabel("All Devices")
-            da_lbl.setStyleSheet("background:#dbeafe;color:#2563eb;padding:3px 9px;border-radius:12px;font-size:12px;font-weight:600")
-        else:
-            da_lbl = QLabel("Restricted")
-            da_lbl.setStyleSheet("background:#f1f5f9;color:#64748b;padding:3px 9px;border-radius:12px;font-size:12px;font-weight:600")
-        da_l.addWidget(da_lbl); da_l.addStretch()
-        t.setCellWidget(r, 5, da_w)
-
         if role == "master":
-            t.setItem(r, 6, table_item("-", Qt.AlignmentFlag.AlignCenter))
+            t.setItem(r, 5, table_item("-", Qt.AlignmentFlag.AlignCenter))
         else:
             btn_w = QWidget()
             btn_l = QHBoxLayout(btn_w)
@@ -1259,23 +1084,11 @@ class UsersPage(QWidget):
 
 
 
-            assign_btn = QPushButton("Assign")
-            assign_btn.setObjectName("btn-sm")
-            assign_btn.setFixedSize(65, 30)
-            assign_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            assign_btn.setStyleSheet(
-                "QPushButton { background: white; color: #2563eb; border: 1px solid #bfdbfe; border-radius: 6px; font-weight: 600; }"
-                "QPushButton:hover { background: #eff6ff; color: #1d4ed8; border-color: #3b82f6; }"
-            )
-            assign_btn.clicked.connect(lambda _, uid=u["id"], nm=u.get("full_name",""): self._open_assign_dialog(uid, nm))
-            if role in ("second_master", "trusted") or u.get("is_trusted"):
-                assign_btn.setVisible(False)
             rem = QPushButton("Remove")
             rem.setObjectName("btn-danger")
             rem.setFixedSize(75, 30)
             rem.clicked.connect(lambda _, uid=u["id"], nm=u.get("full_name",""): self._remove_user(uid, nm))
             btn_l.addWidget(fa_btn)
-            btn_l.addWidget(assign_btn)
             if role == "second_master":
                 demote_btn = QPushButton("Demote")
                 demote_btn.setObjectName("btn-sm")
@@ -1289,7 +1102,7 @@ class UsersPage(QWidget):
                 btn_l.addWidget(demote_btn)
             btn_l.addWidget(rem)
             btn_l.addStretch()
-            t.setCellWidget(r, 6, btn_w)
+            t.setCellWidget(r, 5, btn_w)
 
 
     def _toggle_trust(self, user_id: int, is_trusted: bool):
@@ -1299,7 +1112,7 @@ class UsersPage(QWidget):
         self._tw.start()
 
     def _toggle_force_2fa(self, user_id: int, current_force: bool):
-        self._tf = Worker(self.api.toggle_force_2fa, user_id, not current_force)
+        self._tf = Worker(self.api.toggle_force_otp, user_id, not current_force)
         self._tf.result.connect(lambda _: self.refresh())
         self._tf.error.connect(self._alert.show_error)
         self._tf.start()
@@ -1328,10 +1141,6 @@ class UsersPage(QWidget):
         lay.addWidget(_lbl("Email Address", bold=True))
         email_in = QLineEdit(); email_in.setPlaceholderText("john@example.com")
         lay.addWidget(email_in)
-        lay.addWidget(_lbl("Password (min 8 chars)", bold=True))
-        pass_in = QLineEdit(); pass_in.setPlaceholderText("Leave blank for auto-generated")
-        pass_in.setEchoMode(QLineEdit.EchoMode.Password)
-        lay.addWidget(pass_in)
 
         btns = QHBoxLayout(); btns.setContentsMargins(0,16,0,0)
         cancel_btn = QPushButton("Cancel"); cancel_btn.setObjectName("btn-ghost"); cancel_btn.setFixedSize(100,36)
@@ -1350,9 +1159,9 @@ class UsersPage(QWidget):
         def do_create():
             ok_btn.setEnabled(False); ok_btn.setText("Creating…")
             role_key = role_map.get(role_cb.currentText(), "admin")
-            self._cuw = Worker(self.api.create_user, email_in.text(), name_in.text(), role_key, pass_in.text())
+            self._cuw = Worker(self.api.create_user, email_in.text(), name_in.text(), role_key)
             def on_ok(data):
-                QMessageBox.information(dlg, "Success", f"User created!\n\nEmail: {data['email']}\nTemp Password: {data.get('temp_password')}")
+                QMessageBox.information(dlg, "Success", f"User created!\n\nEmail: {data['email']}\nTemporary Password: {data.get('temp_password')}\n\nPlease share this password securely with the user.")
                 dlg.accept()
                 self.refresh()
             def on_err(e):
@@ -1366,40 +1175,23 @@ class UsersPage(QWidget):
         dlg.exec()
 
     def _remove_user(self, uid: int, name: str):
-        def do_delete(totp_code):
-            self._rw = Worker(self.api.remove_user, uid, totp_code)
-            self._rw.result.connect(lambda _: self.refresh())
-            self._rw.error.connect(self._alert.show_error)
-            self._rw.start()
-
-        user_info = {}
-        p = self
-        while p:
-            if hasattr(p, "user"): user_info = p.user; break
-            p = p.parent()
-        _prompt_sensitive_action(
-            self, user_info, "Confirm Removal 2FA",
-            "Please confirm user removal",
-            do_delete
-        )
+        if QMessageBox.question(self.window(), "Confirm Removal", f"Are you sure you want to remove {name}?",
+                                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
+            return
+        self._rw = Worker(self.api.delete_user, uid)
+        self._rw.result.connect(lambda _: self.refresh())
+        self._rw.error.connect(self._alert.show_error)
+        self._rw.start()
 
     def _demote_user(self, uid: int, name: str):
-        def do_demote(totp_code):
-            self._dw = Worker(self.api.demote_user, uid, totp_code)
-            self._dw.result.connect(lambda _: self.refresh())
-            self._dw.error.connect(self._alert.show_error)
-            self._dw.start()
+        if QMessageBox.question(self.window(), "Confirm Demotion", f"Are you sure you want to demote {name} to Admin User?",
+                                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
+            return
+        self._dw = Worker(self.api.update_user_role, uid, "admin")
+        self._dw.result.connect(lambda _: self.refresh())
+        self._dw.error.connect(self._alert.show_error)
+        self._dw.start()
 
-        user_info = {}
-        p = self
-        while p:
-            if hasattr(p, "user"): user_info = p.user; break
-            p = p.parent()
-        _prompt_sensitive_action(
-            self, user_info, "Demote to Admin",
-            f"Demote {name} to Admin? They will lose access to user management.",
-            do_demote
-        )
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  AUDIT PAGE
@@ -1589,75 +1381,9 @@ class SettingsPage(QWidget):
         pl.addStretch()
         grid.addWidget(pc)
 
-        # 2FA
-        self.tfa_c = QFrame(); self.tfa_c.setObjectName("card")
-        self.tfa_l = QVBoxLayout(self.tfa_c); self.tfa_l.setContentsMargins(24, 24, 24, 24); self.tfa_l.setSpacing(12)
-        self.tfa_l.addWidget(_lbl("Two-Factor Authentication (2FA)", bold=True, size=15))
-        self.tfa_info = _lbl("2FA is mandatory for Master and Second Master accounts.", muted=True)
-        self.tfa_info.setWordWrap(True)
-        self.tfa_l.addWidget(self.tfa_info)
-        
-        self.tfa_status_lbl = QLabel()
-        self.tfa_l.addWidget(self.tfa_status_lbl)
-        
-        self.reconf_btn = QPushButton()
-        self.reconf_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.reconf_btn.clicked.connect(self._configure_2fa)
-        self.tfa_l.addWidget(self.reconf_btn)
-        self.tfa_l.addStretch()
-        grid.addWidget(self.tfa_c)
         lay.addLayout(grid)
-        self._update_2fa_ui()
 
         grid2 = QHBoxLayout(); grid2.setSpacing(20)
-
-        # Network Configuration
-        zt_c = QFrame(); zt_c.setObjectName("card")
-        zt_l = QVBoxLayout(zt_c); zt_l.setContentsMargins(24, 24, 24, 24); zt_l.setSpacing(12)
-        
-        if TUNNEL_MODE == "wireguard":
-            zt_l.addWidget(_lbl("WireGuard Identity", bold=True, size=15))
-            from services.wireguard_local import get_or_create_keypair
-            priv, pub = get_or_create_keypair()
-            zt_l.addWidget(_lbl("Private Key", muted=True))
-            self._wg_priv_in = QLineEdit()
-            self._wg_priv_in.setText(priv)
-            self._wg_priv_in.setEchoMode(QLineEdit.EchoMode.PasswordEchoOnEdit)
-            zt_l.addWidget(self._wg_priv_in)
-            
-            zt_l.addWidget(_lbl("Public Key", muted=True))
-            self._wg_pub_lbl = QLineEdit()
-            self._wg_pub_lbl.setText(pub)
-            self._wg_pub_lbl.setReadOnly(True)
-            self._wg_pub_lbl.setStyleSheet("background:#f1f5f9;color:#64748b")
-            zt_l.addWidget(self._wg_pub_lbl)
-            
-            save_wg_btn = QPushButton("Save Key")
-            save_wg_btn.setStyleSheet("QPushButton{background:#2563eb;color:white;border:none;border-radius:8px;padding:9px 18px;font-size:14px;font-weight:600} QPushButton:hover{background:#1d4ed8}")
-            save_wg_btn.clicked.connect(self._save_wg_key)
-            zt_l.addWidget(save_wg_btn)
-            
-            info = _lbl("If you change your key, you must Remove and re-Approve this device from the dashboard.", muted=True)
-            info.setWordWrap(True)
-            info.setStyleSheet("color:#f59e0b;font-size:11px;margin-top:8px;")
-            zt_l.addWidget(info)
-            zt_l.addStretch()
-        else:
-            zt_l.addWidget(_lbl("ZeroTier Network", bold=True, size=15))
-            zt_l.addSpacing(14)
-            for label, val in [("Network ID", self.user.get("network_id") or "—"), ("Status", "Connected"), ("Auto-Reconnect", "✓ Enabled")]:
-                rw = QWidget(); rw.setStyleSheet("border-bottom:1px solid #f1f5f9")
-                rl = QHBoxLayout(rw); rl.setContentsMargins(0, 10, 0, 10)
-                rl.addWidget(_lbl(label, muted=True)); rl.addStretch()
-                if val == "Connected":
-                    v = QLabel(val); v.setStyleSheet("background:#dcfce7;color:#15803d;padding:2px 8px;border-radius:10px;font-size:12px;font-weight:600")
-                else:
-                    v = _lbl(val)
-                rl.addWidget(v)
-                zt_l.addWidget(rw)
-            zt_l.addStretch()
-            
-        grid2.addWidget(zt_c)
 
         # Change password
         pw_c = QFrame(); pw_c.setObjectName("card")
@@ -1701,102 +1427,8 @@ class SettingsPage(QWidget):
         root.setContentsMargins(0, 0, 0, 0)
         root.addWidget(scroll)
 
-    def _save_wg_key(self):
-        new_priv = self._wg_priv_in.text().strip()
-        if not new_priv:
-            self._alert.show_error("Private key cannot be empty")
-            return
-        try:
-            from services.wireguard_local import WG_CMD, WG_KEY_STORAGE
-            import subprocess, json, os, sys
-            cflags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
-            pub = subprocess.run([WG_CMD, "pubkey"], input=new_priv, capture_output=True, text=True, check=True, creationflags=cflags).stdout.strip()
-            os.makedirs(os.path.dirname(WG_KEY_STORAGE), exist_ok=True)
-            with open(WG_KEY_STORAGE, "w") as f:
-                json.dump({"private_key": new_priv, "public_key": pub}, f)
-            self._wg_pub_lbl.setText(pub)
-            self._alert.show_success("WireGuard key saved! Please restart the client.")
-        except Exception as e:
-            self._alert.show_error(f"Failed to save WireGuard key: {e}")
-
     def refresh(self):
         pass
-
-    def _configure_2fa(self):
-        try:
-            # pyrefly: ignore [missing-import]
-            from client.windows.setup_2fa_window import Setup2FAWindow
-        except ImportError:
-            # pyrefly: ignore [missing-import]
-            from windows.setup_2fa_window import Setup2FAWindow
-        self.setup_2fa_win = Setup2FAWindow(self.api)
-        self.setup_2fa_win.setup_complete.connect(self._on_2fa_setup_complete)
-        self.setup_2fa_win.show()
-
-    def _on_2fa_setup_complete(self):
-        if hasattr(self, "setup_2fa_win"):
-            self.setup_2fa_win.hide()
-        self._refresh_user_info()
-
-    def _refresh_user_info(self):
-        self._ref_worker = Worker(self.api.get_me)
-        def on_result(user_info):
-            self.user = user_info
-            p = self
-            while p:
-                if hasattr(p, "user") and p is not self:
-                    # pyrefly: ignore [missing-attribute]
-                    p.user = user_info
-                    break
-                p = p.parent()
-            self._update_2fa_ui()
-        self._ref_worker.result.connect(on_result)
-        self._ref_worker.error.connect(self._alert.show_error)
-        self._ref_worker.start()
-
-    def _update_2fa_ui(self):
-        if self.user.get("totp_enabled"):
-            self.tfa_status_lbl.setText("✓  2FA is Active on this account")
-            self.tfa_status_lbl.setStyleSheet("background:#dcfce7;color:#15803d;border:1px solid #bbf7d0;border-radius:8px;padding:10px 14px;font-size:13px")
-            self.reconf_btn.setText("Re-configure 2FA")
-            self.reconf_btn.setStyleSheet("""
-                QPushButton {
-                    background: white;
-                    color: #dc2626;
-                    border: 1px solid #fca5a5;
-                    border-radius: 8px;
-                    padding: 9px 18px;
-                    font-size: 14px;
-                    font-weight: 600;
-                }
-                QPushButton:hover {
-                    background: #fee2e2;
-                    border-color: #ef4444;
-                }
-            """)
-        else:
-            role = self.user.get("role", "")
-            if role in ("master", "second_master"):
-                self.tfa_status_lbl.setText("⚠  2FA not yet enabled — required for this account")
-                self.tfa_status_lbl.setStyleSheet("background:#fee2e2;color:#b91c1c;border:1px solid #fecaca;border-radius:8px;padding:10px 14px;font-size:13px")
-            else:
-                self.tfa_status_lbl.setText("⚠  2FA not yet enabled — optional for this account")
-                self.tfa_status_lbl.setStyleSheet("background:#fffbeb;color:#b45309;border:1px solid #fde68a;border-radius:8px;padding:10px 14px;font-size:13px")
-            self.reconf_btn.setText("Configure 2FA")
-            self.reconf_btn.setStyleSheet("""
-                QPushButton {
-                    background: #2563eb;
-                    color: white;
-                    border: none;
-                    border-radius: 8px;
-                    padding: 9px 18px;
-                    font-size: 14px;
-                    font-weight: 600;
-                }
-                QPushButton:hover {
-                    background: #1d4ed8;
-                }
-            """)
 
     def _change_password(self):
         np = self._new_pw.text()
@@ -2053,11 +1685,6 @@ class MainWindow(QMainWindow):
         self._net_monitor = NetworkMonitor(self._on_network_change)
         self._net_monitor.start()
 
-        # pyrefly: ignore [missing-import]
-        from services.websocket_client import ws_client
-        # pyrefly: ignore [missing-attribute]
-        ws_client.user_updated.connect(self._check_user_compliance)
-
         self._build()
         if self.is_master:
             self._nav("dashboard")
@@ -2071,10 +1698,6 @@ class MainWindow(QMainWindow):
         self._banner_timer = QTimer(self)
         self._banner_timer.timeout.connect(self._update_offline_banner)
         self._banner_timer.start(60000)
-
-        self._tunnel_timer = QTimer(self)
-        self._tunnel_timer.timeout.connect(self._update_tunnel_status)
-        self._tunnel_timer.start(5000)
 
     def _do_refresh(self):
         page = getattr(self, "_pages", {}).get(self._current_page, getattr(self, "_pages", {}).get("devices"))
@@ -2201,15 +1824,13 @@ class MainWindow(QMainWindow):
         if self.is_master:
             nav_items = [
                 ("dashboard", asset_path("grid.svg"), "Dashboard"),
-                ("devices", asset_path(ICON_MONITOR), "Devices"),
-                ("wgtunnel", asset_path("shield.svg"), "WG Tunnel"),
+                ("devices", asset_path(ICON_MONITOR), "Routers"),
                 ("users", asset_path(ICON_USERS), "Users"),
-                ("audit", asset_path("file.svg"), "Audit Log"),
                 ("settings", asset_path("settings.svg"), "Settings")
             ]
         else:
             nav_items = [
-                ("devices", asset_path(ICON_MONITOR), "Devices"),
+                ("devices", asset_path(ICON_MONITOR), "Routers"),
                 ("settings", asset_path("settings.svg"), "Settings")
             ]
 
@@ -2227,12 +1848,6 @@ class MainWindow(QMainWindow):
             self._nav_btns[key] = btn
 
         sb.addStretch()
-        tun_name = "WireGuard" if TUNNEL_MODE == "wireguard" else "ZeroTier"
-        is_running = is_tunnel_running()
-        self.tunnel_status_lbl = QLabel(f"● {tun_name} Active" if is_running else f"○ {tun_name} Inactive")
-        color = "#4ade80" if is_running else "#f87171"
-        self.tunnel_status_lbl.setStyleSheet(f"color:{color};font-size:12px;padding:8px 18px")
-        sb.addWidget(self.tunnel_status_lbl)
 
         logout_btn = QPushButton("  Logout")
         logout_btn.setObjectName("nav-logout")
@@ -2272,12 +1887,9 @@ class MainWindow(QMainWindow):
         self._pages = {
             "dashboard": DashboardPage(self.api, self.user),
             "devices":   DevicesPage(self.api, self.user),
-            "audit":     AuditPage(self.api),
             "settings":  SettingsPage(self.api, self.user),
-            "wgtunnel":  WgTunnelPage(self.api, self.user),
         }
         self._pages["dashboard"].manage_devices_requested.connect(lambda: self._nav("devices"))
-        self._pages["dashboard"].view_logs_requested.connect(lambda: self._nav("audit"))
         self._pages["settings"].profile_updated.connect(self.update_sidebar_user)
         if self.is_master:
             # pyrefly: ignore [bad-typed-dict-key]

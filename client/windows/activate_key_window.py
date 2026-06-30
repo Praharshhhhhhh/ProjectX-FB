@@ -37,7 +37,7 @@ class ActivateWorker(QThread):
 
     def run(self):
         try:
-            data = self.api.activate_key(self.key_code, self.email, self.full_name, self.password)
+            data = self.api.activate_master_account(self.key_code, self.email, self.full_name, self.password)
             self.success.emit(data)
         except httpx.HTTPStatusError as e:
             try:

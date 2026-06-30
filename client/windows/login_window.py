@@ -1,20 +1,11 @@
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
-    QPushButton, QFrame, QSizePolicy
+    QPushButton, QFrame
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 import httpx
 
-# pyrefly: ignore [missing-import]
-from config import APP_VERSION
-
-DEMO_ACCOUNTS = [
-    ("System Owner", "#fef3c7", "#92400e", "owner@projectx.io",    "Admin@123"),
-    ("Master",       "#ede9fe", "#5b21b6", "master@techcorp.com",  "master123"),
-    ("2nd Master",   "#dbeafe", "#1e40af", "second@techcorp.com",  "second123"),
-    ("Admin",        "#dcfce7", "#166534", "admin@techcorp.com",   "admin123"),
-    ("Trusted",      "#fce7f3", "#9d174d", "trusted@techcorp.com", "trusted123"),
-]
+from config import APP_VERSION, DEMO_ACCOUNTS
 
 
 class _DemoRow(QFrame):
@@ -50,15 +41,12 @@ class _DemoRow(QFrame):
         self._email = email
         self._pw = pw
 
-    # pyrefly: ignore [bad-override-param-name]
     def enterEvent(self, e):
         self.setStyleSheet(self._ss_h)
 
-    # pyrefly: ignore [bad-override-param-name]
     def leaveEvent(self, e):
         self.setStyleSheet(self._ss_n)
 
-    # pyrefly: ignore [bad-override-param-name]
     def mousePressEvent(self, e):
         if e.button() == Qt.MouseButton.LeftButton:
             self._cb(self._email, self._pw)
@@ -66,6 +54,7 @@ class _DemoRow(QFrame):
 
 class _LoginWorker(QThread):
     success = pyqtSignal(dict, dict)
+    otp_required = pyqtSignal(str)  # email
     error = pyqtSignal(str)
 
     def __init__(self, api, email, password):
@@ -88,6 +77,10 @@ class _LoginWorker(QThread):
     def run(self):
         try:
             token_data = self.api.login(self.email, self.password)
+            if token_data.get("requires_otp"):
+                self.otp_required.emit(self.email)
+                return
+            
             me = self.api.get_me()
             try:
                 from services.cache_service import cache_service
@@ -109,7 +102,7 @@ class _LoginWorker(QThread):
                         self.api.token = data["token"]
                         self.api._password = self.password
                         self.api._user = data["user"]
-                        self.success.emit({"access_token": data["token"], "requires_2fa": False}, data["user"])
+                        self.success.emit({"access_token": data["token"], "requires_otp": False}, data["user"])
                     else:
                         self.error.emit("Offline: Incorrect email or password.")
                 else:
@@ -130,6 +123,7 @@ class _LoginWorker(QThread):
 
 class LoginWindow(QWidget):
     login_success = pyqtSignal(dict, dict)
+    otp_required = pyqtSignal(str)
     goto_activate = pyqtSignal()
 
     def __init__(self, api):
@@ -161,7 +155,7 @@ class LoginWindow(QWidget):
             "background:#2563eb;color:white;border-radius:8px;"
             "font-weight:700;font-size:16px"
         )
-        logo_lbl = QLabel("ProjectX")
+        logo_lbl = QLabel("SetuLink")
         logo_lbl.setStyleSheet("color:white;font-size:18px;font-weight:700")
         logo_row.addWidget(x_box)
         logo_row.addWidget(logo_lbl)
@@ -170,7 +164,7 @@ class LoginWindow(QWidget):
         ll.addSpacing(52)
 
         # Headline
-        title = QLabel("Secure OT Network\nAccess Platform")
+        title = QLabel("Minimal Router\nActivation Portal")
         title.setStyleSheet(
             "color:white;font-size:26px;font-weight:800;background:transparent"
         )
@@ -179,8 +173,8 @@ class LoginWindow(QWidget):
         ll.addSpacing(16)
 
         desc = QLabel(
-            "Role-based remote access for industrial devices.\n"
-            "Powered by ZeroTier with enterprise-grade security."
+            "Claim and validate routers for your tenant securely.\n"
+            "Simple, reliable device setup with Email OTP authentication."
         )
         desc.setStyleSheet("color:#94a3b8;font-size:13px;background:transparent")
         desc.setWordWrap(True)
@@ -190,7 +184,7 @@ class LoginWindow(QWidget):
         # Feature badges
         badges_row = QHBoxLayout()
         badges_row.setSpacing(8)
-        for text in ["5 Roles", "2FA Enforced", "256-bit AES"]:
+        for text in ["Onboarding", "Email OTP", "Offline Queue"]:
             b = QLabel(text)
             b.setFixedHeight(28)
             b.setStyleSheet(
@@ -203,7 +197,7 @@ class LoginWindow(QWidget):
         ll.addLayout(badges_row)
         ll.addStretch()
 
-        ver = QLabel(f"ProjectX Platform · v{APP_VERSION}")
+        ver = QLabel(f"SetuLink Platform · v{APP_VERSION}")
         ver.setStyleSheet("color:#475569;font-size:12px;background:transparent")
         ll.addWidget(ver)
         root.addWidget(left)
@@ -317,7 +311,7 @@ class LoginWindow(QWidget):
             cl.addSpacing(6)
 
         cl.addSpacing(8)
-        hint = QLabel("All passwords follow the pattern: role + 123")
+        hint = QLabel("All passwords follow the pattern: role + 123 (except owner)")
         hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         hint.setStyleSheet("font-size:12px;color:#94a3b8;background:transparent")
         cl.addWidget(hint)
@@ -339,7 +333,6 @@ class LoginWindow(QWidget):
         rl.addStretch()
         root.addWidget(right, 1)
 
-    # ── slots ──────────────────────────────────────────────────────────────
     def _autofill(self, email: str, pw: str):
         self._email.setText(email)
         self._pw.setText(pw)
@@ -356,6 +349,7 @@ class LoginWindow(QWidget):
         self._err.setVisible(False)
         self._worker = _LoginWorker(self.api, email, pw)
         self._worker.success.connect(self._on_success)
+        self._worker.otp_required.connect(self._on_otp_required)
         self._worker.error.connect(self._on_error)
         self._worker.start()
 
@@ -363,6 +357,11 @@ class LoginWindow(QWidget):
         self._btn.setText("Sign In")
         self._btn.setEnabled(True)
         self.login_success.emit(token_data, me)
+
+    def _on_otp_required(self, email: str):
+        self._btn.setText("Sign In")
+        self._btn.setEnabled(True)
+        self.otp_required.emit(email)
 
     def _on_error(self, msg: str):
         self._btn.setText("Sign In")

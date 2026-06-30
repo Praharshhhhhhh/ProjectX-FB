@@ -8,10 +8,11 @@ class ActivationKey(Base):
     __tablename__ = "activation_keys"
 
     id = Column(Integer, primary_key=True, index=True)
-    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False)
+    router_id = Column(Integer, ForeignKey("routers.id"), unique=True, nullable=False)
     key_code = Column(String, unique=True, nullable=False)
     is_used = Column(Boolean, default=False)
-    used_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    used_by_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+    used_at = Column(DateTime, nullable=True)
 
-    tenant = relationship("Tenant", back_populates="activation_keys")
+    router = relationship("Router", back_populates="activation_key")

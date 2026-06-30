@@ -274,7 +274,7 @@ def make_table(columns: list[str]) -> QTableWidget:
     return t
 
 
-def table_item(text: str, align=Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft) -> QTableWidgetItem:
+def table_item(text: str, align=Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignHCenter) -> QTableWidgetItem:
     # pyrefly: ignore [unnecessary-type-conversion]
     item = QTableWidgetItem(str(text))
     item.setTextAlignment(align)

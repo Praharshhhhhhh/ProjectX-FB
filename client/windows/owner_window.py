@@ -22,13 +22,12 @@ from widgets.common import (
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class OwnerDashboardPage(QWidget):
-    def __init__(self, api, on_new_tenant=None, on_view_tenants=None, on_manage_keys=None, on_full_log=None):
+    def __init__(self, api, on_new_tenant=None, on_view_tenants=None, on_manage_keys=None):
         super().__init__()
         self.api = api
         self._on_new_tenant = on_new_tenant
         self._on_view_tenants = on_view_tenants
         self._on_manage_keys = on_manage_keys
-        self._on_full_log = on_full_log
         self._build()
 
     def _build(self):
@@ -63,7 +62,7 @@ class OwnerDashboardPage(QWidget):
         stats_row.setSpacing(16)
         self._s_tenants  = StatCard("Total Tenants",  "—", color="#2563eb", icon_path=asset_path("users.svg"))
         self._s_keys     = StatCard("Pending Keys",   "—", color="#ea580c", icon_path=asset_path("key.svg"))
-        self._s_devices  = StatCard("Total Devices",  "—", color="#2563eb", icon_path=asset_path("monitor.svg"))
+        self._s_devices  = StatCard("Total Routers",  "—", color="#2563eb", icon_path=asset_path("monitor.svg"))
         self._s_active   = StatCard("Active Tenants", "—", color="#16a34a", icon_path=asset_path("check.svg"))
         for c in [self._s_tenants, self._s_keys, self._s_devices, self._s_active]:
             c.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
@@ -74,20 +73,19 @@ class OwnerDashboardPage(QWidget):
         self._tenants_card = CardWithHeader("Recent Tenants", "View all")
         if getattr(self._tenants_card, "action_btn", None) and self._on_view_tenants:
             self._tenants_card.action_btn.clicked.connect(self._on_view_tenants)
-        self._tenants_tbl = make_table(["Company", "City", "Master User", "Devices", "ZeroTier ID", "Status", "Action"])
+        self._tenants_tbl = make_table(["ID", "Company Name", "Master User", "Users Count", "Status", "Action"])
         self._tenants_tbl.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._tenants_tbl.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         hh = self._tenants_tbl.horizontalHeader()
         hh.setMinimumSectionSize(44)
-        for col in range(7):
+        for col in range(6):
             hh.setSectionResizeMode(col, QHeaderView.ResizeMode.Interactive)
-        hh.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        self._tenants_tbl.setColumnWidth(1, 130)
-        self._tenants_tbl.setColumnWidth(2, 160)
-        self._tenants_tbl.setColumnWidth(3, 90)
-        self._tenants_tbl.setColumnWidth(4, 150)
-        self._tenants_tbl.setColumnWidth(5, 100)
-        self._tenants_tbl.setColumnWidth(6, 130)
+        hh.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self._tenants_tbl.setColumnWidth(0, 60)
+        self._tenants_tbl.setColumnWidth(2, 200)
+        self._tenants_tbl.setColumnWidth(3, 100)
+        self._tenants_tbl.setColumnWidth(4, 120)
+        self._tenants_tbl.setColumnWidth(5, 120)
         self._tenants_card.add_widget(self._tenants_tbl)
         self._layout.addWidget(self._tenants_card)
 
@@ -107,18 +105,6 @@ class OwnerDashboardPage(QWidget):
         self._keys_vlay.addStretch()
         self._keys_card.add_widget(self._keys_list)
         bottom.addWidget(self._keys_card, alignment=Qt.AlignmentFlag.AlignTop)
-
-        self._audit_card = CardWithHeader("Activity Log", "Full Log")
-        if getattr(self._audit_card, "action_btn", None) and self._on_full_log:
-            self._audit_card.action_btn.clicked.connect(self._on_full_log)
-        self._audit_list = QWidget()
-        self._audit_list.setStyleSheet("background:white; border-bottom-left-radius:12px; border-bottom-right-radius:12px;")
-        self._audit_vlay = QVBoxLayout(self._audit_list)
-        self._audit_vlay.setContentsMargins(0, 0, 0, 0)
-        self._audit_vlay.setSpacing(0)
-        self._audit_vlay.addStretch()
-        self._audit_card.add_widget(self._audit_list)
-        bottom.addWidget(self._audit_card, alignment=Qt.AlignmentFlag.AlignTop)
         self._layout.addLayout(bottom)
         self._layout.addStretch()
 
@@ -131,18 +117,17 @@ class OwnerDashboardPage(QWidget):
         self._w1 = Worker(lambda: (
             self.api.get_admin_stats(),
             self.api.get_admin_tenants(),
-            self.api.get_admin_keys(),
-            self.api.get_admin_audit_logs()
+            self.api.get_pending_keys(),
         ))
         self._w1.result.connect(self._on_data)
         self._w1.error.connect(lambda e: print("Dashboard error:", e))
         self._w1.start()
 
     def _on_data(self, data):
-        stats, tenants, keys, logs = data
+        stats, tenants, keys = data
         self._s_tenants.set_value(stats.get("total_tenants", 0))
         self._s_keys.set_value(stats.get("pending_keys", 0))
-        self._s_devices.set_value(stats.get("total_devices", 0))
+        self._s_devices.set_value(stats.get("total_routers", 0))
         self._s_active.set_value(stats.get("active_tenants", 0))
 
         # Tenants table
@@ -150,27 +135,14 @@ class OwnerDashboardPage(QWidget):
         t.setRowCount(0)
         for row in tenants[:8]:
             r = t.rowCount(); t.insertRow(r)
-            t.setItem(r, 0, table_item(row.get("company_name", "")))
-            t.setItem(r, 1, table_item(row.get("city") or "—"))
+            t.setItem(r, 0, table_item(str(row.get("id"))))
+            t.setItem(r, 1, table_item(row.get("company_name", "")))
             t.setItem(r, 2, table_item(row.get("master_email") or "—"))
-            t.setItem(r, 3, table_item(str(row.get("device_count", 0))))
-            net_id = row.get("zerotier_network_id") or "—"
-            if net_id != "—" and not row.get("network_owner_id"):
-                lbl = QLabel(f"⚠ {net_id}")
-                lbl.setStyleSheet("color:#dc2626; font-weight:bold; background:#fee2e2; padding:2px 6px; border-radius:6px;")
-                w = QWidget()
-                l = QHBoxLayout(w)
-                l.setContentsMargins(4, 0, 4, 0)
-                l.addWidget(lbl)
-                l.addStretch()
-                t.setCellWidget(r, 4, w)
-            else:
-                t.setItem(r, 4, table_item(net_id))
-            s = row.get("status", "pending")
-            t.setItem(r, 5, table_item(s.title()))
+            t.setItem(r, 3, table_item(str(row.get("user_count", 0))))
+            t.setItem(r, 4, table_item(row.get("status", "pending").title()))
 
             cell_w = QWidget()
-            cell_w.setStyleSheet("background:transparent" if (net_id != "—" and not row.get("network_owner_id")) else "background:white")
+            cell_w.setStyleSheet("background:white")
             cell_l = QHBoxLayout(cell_w)
             cell_l.setContentsMargins(6, 6, 6, 6)
             cell_l.setSpacing(6)
@@ -182,15 +154,7 @@ class OwnerDashboardPage(QWidget):
             )
             del_btn.clicked.connect(lambda _, tid=row["id"], nm=row["company_name"]: self._delete_tenant(tid, nm))
             cell_l.addWidget(del_btn)
-            t.setCellWidget(r, 6, cell_w)
-            
-            if net_id != "—" and not row.get("network_owner_id"):
-                from PyQt6.QtGui import QBrush, QColor
-                bg_brush = QBrush(QColor("#fef3c7"))
-                for c in range(t.columnCount()):
-                    it = t.item(r, c)
-                    if it:
-                        it.setBackground(bg_brush)
+            t.setCellWidget(r, 5, cell_w)
 
         for rr in range(t.rowCount()):
             t.setRowHeight(rr, 54)
@@ -231,68 +195,28 @@ class OwnerDashboardPage(QWidget):
             rl.addWidget(status)
             self._keys_vlay.insertWidget(self._keys_vlay.count() - 1, row_w)
 
-        # Audit log
-        while self._audit_vlay.count() > 1:
-            item = self._audit_vlay.takeAt(0)
-            # pyrefly: ignore [missing-attribute]
-            if item.widget():
-                # pyrefly: ignore [missing-attribute]
-                item.widget().deleteLater()
-
-        for log in logs[:8]:
-            row_w = QWidget()
-            row_w.setStyleSheet("border-bottom:1px solid #f1f5f9")
-            rl = QHBoxLayout(row_w)
-            rl.setContentsMargins(16, 12, 16, 12)
-            dot = QLabel("●")
-            lvl = log.get("level", "info")
-            dot_colors = {"success": "#16a34a", "info": "#2563eb", "warning": "#d97706", "error": "#dc2626"}
-            dot.setStyleSheet(f"color:{dot_colors.get(lvl,'#2563eb')};font-size:10px;background:transparent")
-            rl.addWidget(dot)
-            text_col = QVBoxLayout()
-            desc = QLabel(log.get("description", ""))
-            desc.setStyleSheet("font-size:13px;color:#0f172a;background:transparent")
-            meta = QLabel(f"By {log.get('user_name','System')} · {_fmt_date(log.get('created_at',''))}")
-            meta.setStyleSheet("font-size:11px;color:#64748b;background:transparent")
-            text_col.addWidget(desc)
-            text_col.addWidget(meta)
-            rl.addLayout(text_col)
-            rl.addStretch()
-            bg, fg = LEVEL_COLORS.get(lvl, ("#dbeafe", "#1d4ed8"))
-            lbl = QLabel(lvl.title())
-            lbl.setStyleSheet(f"background:{bg};color:{fg};padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600")
-            rl.addWidget(lbl)
-            self._audit_vlay.insertWidget(self._audit_vlay.count() - 1, row_w)
-
     def _delete_tenant(self, tid: int, name: str):
-        def do_delete(totp_code):
-            self._dtw = Worker(self.api.delete_tenant, tid, totp_code)
-            # pyrefly: ignore [missing-attribute]
-            self._dtw.result.connect(lambda _: (self.refresh(), self._alert.show_success("Tenant deleted")))
-            # pyrefly: ignore [missing-attribute]
-            self._dtw.error.connect(self._alert.show_error)
-            self._dtw.start()
-
-        user_info = self.api._user or getattr(self.window(), "user", {})
-        _prompt_sensitive_action(
-            self, user_info, "Confirm Delete",
-            "Please confirm tenant deletion",
-            do_delete
-        )
+        if QMessageBox.question(self.window(), "Confirm Delete", f"Are you sure you want to delete tenant '{name}'? This will delete all associated data.",
+                                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
+            return
+        self._dtw = Worker(self.api.delete_tenant, tid)
+        # pyrefly: ignore [missing-attribute]
+        self._dtw.result.connect(lambda _: (self.refresh(), self._alert.show_success("Tenant deleted")))
+        # pyrefly: ignore [missing-attribute]
+        self._dtw.error.connect(self._alert.show_error)
+        self._dtw.start()
 
     def _do_force_2fa_all(self):
-        def do_force(totp_code):
-            self._fw = Worker(self.api.force_2fa_all)
-            self._fw.result.connect(lambda _: (self.refresh(), self._alert.show_success("2FA forced for all users")))
-            self._fw.error.connect(self._alert.show_error)
-            self._fw.start()
-
-        user_info = getattr(self.window(), "user", {})
-        _prompt_sensitive_action(
-            self, user_info, "Force 2FA Globally",
-            "Force 2FA for all users across all tenants?",
-            do_force
-        )
+        if QMessageBox.question(
+            self.window(), "Force 2FA Globally",
+            "This will enable email OTP for ALL master and second master users across every tenant. Continue?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        ) != QMessageBox.StandardButton.Yes:
+            return
+        self._fw = Worker(self.api.force_2fa_all)
+        self._fw.result.connect(lambda r: (self.refresh(), self._alert.show_success(r.get("message", "Done"))))
+        self._fw.error.connect(self._alert.show_error)
+        self._fw.start()
 
 class TenantsPage(QWidget):
     def __init__(self, api):
@@ -440,7 +364,7 @@ class TenantsPage(QWidget):
     def _add_tenant(self):
         dlg = QDialog(self.window())
         dlg.setWindowTitle("New Tenant")
-        dlg.setFixedSize(420, 360)
+        dlg.setFixedSize(420, 420)
         dlg.setStyleSheet("QDialog{background:#f1f5f9} QLabel{background:transparent;color:#0f172a} QLineEdit{background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:9px;font-size:14px;color:#0f172a}")
         lay = QVBoxLayout(dlg)
         lay.setContentsMargins(28, 28, 28, 28)
@@ -449,9 +373,10 @@ class TenantsPage(QWidget):
         lay.addWidget(_lbl("Company Name", bold=True))
         name_in = QLineEdit(); name_in.setPlaceholderText("Acme Corp")
         lay.addWidget(name_in)
-        lay.addWidget(_lbl("City", bold=True))
-        city_in = QLineEdit(); city_in.setPlaceholderText("New York")
-        lay.addWidget(city_in)
+
+        lay.addWidget(_lbl("Master User Email", bold=True))
+        master_email_in = QLineEdit(); master_email_in.setPlaceholderText("john@acme.com")
+        lay.addWidget(master_email_in)
 
         btns = QHBoxLayout()
         ok_btn = QPushButton("Create Tenant")
@@ -466,11 +391,13 @@ class TenantsPage(QWidget):
 
         def do_create():
             nm = name_in.text().strip()
-            if not nm:
+            m_email = master_email_in.text().strip()
+            if not nm or not m_email:
+                self._alert.show_error("All fields are required.")
                 return
             ok_btn.setEnabled(False); ok_btn.setText("Creating…")
-            self._cw = Worker(self.api.create_tenant, nm, city_in.text().strip())
-            self._cw.result.connect(lambda _: (dlg.accept(), self.refresh(), self._alert.show_success("Tenant created")))
+            self._cw = Worker(self.api.create_tenant, nm, m_email)
+            self._cw.result.connect(lambda _: (dlg.accept(), self.refresh(), self._alert.show_success("Tenant created and Activation Key emailed")))
             self._cw.error.connect(lambda e: (self._alert.show_error(e), ok_btn.setEnabled(True), ok_btn.setText("Create Tenant")))
             self._cw.start()
 
@@ -488,18 +415,13 @@ class TenantsPage(QWidget):
         self._uw.start()
 
     def _delete(self, tid: int, name: str):
-        def do_delete(totp_code):
-            self._dw = Worker(self.api.delete_tenant, tid, totp_code)
-            self._dw.result.connect(lambda _: (self.refresh(), self._alert.show_success("Tenant deleted")))
-            self._dw.error.connect(self._alert.show_error)
-            self._dw.start()
-
-        user_info = self.api._user or getattr(self.window(), "user", {})
-        _prompt_sensitive_action(
-            self, user_info, "Confirm Delete",
-            "Please confirm tenant deletion",
-            do_delete
-        )
+        if QMessageBox.question(self.window(), "Confirm Delete", f"Are you sure you want to delete tenant '{name}'? This will delete all associated data.",
+                                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
+            return
+        self._dw = Worker(self.api.delete_tenant, tid)
+        self._dw.result.connect(lambda _: (self.refresh(), self._alert.show_success("Tenant deleted")))
+        self._dw.error.connect(self._alert.show_error)
+        self._dw.start()
 
 
 class KeysPage(QWidget):
@@ -516,334 +438,232 @@ class KeysPage(QWidget):
         self._alert = AlertBar()
         lay.addWidget(self._alert)
 
-        hdr = PageHeader("Activation Keys", "One-time keys for Master User onboarding", "+ Generate Key")
-        if hdr.action_btn:
-            hdr.action_btn.clicked.connect(self._generate_key)
-        lay.addWidget(hdr)
+        lay.addWidget(PageHeader("Router Preparation", "Prepare routers and send activation keys to customers"))
 
-        card = CardWithHeader("All Keys")
-        self._tbl = make_table(["#", "Key Code", "Company", "Generated", "Status", "Actions"])
-        self._tbl.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self._tbl.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        hh = self._tbl.horizontalHeader()
-        # Keep action buttons fully visible by fixing utility columns and only
-        # stretching the data columns that can safely absorb the remaining room.
-        hh.setMinimumSectionSize(44)
-        for col in (0, 3, 4, 5):
-            hh.setSectionResizeMode(col, QHeaderView.ResizeMode.Fixed)
-        hh.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        hh.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
-        self._tbl.setColumnWidth(0, 50)
-        self._tbl.setColumnWidth(3, 160)
-        self._tbl.setColumnWidth(4, 110)
-        self._tbl.setColumnWidth(5, 190)
-        card.add_widget(self._tbl)
+        card = CardWithHeader("Prepare Router Form")
+        card.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
+        
+        form_w = QWidget()
+        form_w.setStyleSheet("background:white; border-radius:12px; padding:20px;")
+        form = QFormLayout(form_w)
+        form.setSpacing(14)
+        
+        self.router_id_in = QLineEdit()
+        self.router_id_in.setPlaceholderText("e.g. router-01")
+        self.router_id_in.setStyleSheet("QLineEdit{background:#f8fafc; border:1px solid #cbd5e1; border-radius:6px; padding:8px; font-size:13px; color:#0f172a;}")
+        
+        self.serial_in = QLineEdit()
+        self.serial_in.setPlaceholderText("e.g. SN-0001")
+        self.serial_in.setStyleSheet("QLineEdit{background:#f8fafc; border:1px solid #cbd5e1; border-radius:6px; padding:8px; font-size:13px; color:#0f172a;}")
+        
+        self.mac_in = QLineEdit()
+        self.mac_in.setPlaceholderText("e.g. 00:11:22:33:44:55")
+        self.mac_in.setStyleSheet("QLineEdit{background:#f8fafc; border:1px solid #cbd5e1; border-radius:6px; padding:8px; font-size:13px; color:#0f172a;}")
+        
+        self.email_in = QLineEdit()
+        self.email_in.setPlaceholderText("e.g. customer@company.com")
+        self.email_in.setStyleSheet("QLineEdit{background:#f8fafc; border:1px solid #cbd5e1; border-radius:6px; padding:8px; font-size:13px; color:#0f172a;}")
+        
+        self.zt_in = QLineEdit()
+        self.zt_in.setPlaceholderText("e.g. 17d7094a3b")
+        self.zt_in.setStyleSheet("QLineEdit{background:#f8fafc; border:1px solid #cbd5e1; border-radius:6px; padding:8px; font-size:13px; color:#0f172a;}")
 
-        warn = QLabel("⚠  Each key is one-time use only. Once a Master User activates, it becomes permanently invalid.")
-        warn.setWordWrap(True)
-        warn.setStyleSheet("background:#fef9c3;color:#a16207;border:1px solid #fde68a;border-radius:8px;padding:10px 14px;font-size:13px;margin:12px")
-        card.add_widget(warn)
+        form.addRow(_lbl("Router ID:", bold=True), self.router_id_in)
+        form.addRow(_lbl("Serial Number:", bold=True), self.serial_in)
+        form.addRow(_lbl("MAC Address:", bold=True), self.mac_in)
+        form.addRow(_lbl("ZeroTier Node ID:", bold=True), self.zt_in)
+        form.addRow(_lbl("Recipient Email:", bold=True), self.email_in)
+
+        self.prep_btn = QPushButton("Prepare Router & Send Key")
+        self.prep_btn.setStyleSheet("QPushButton{background:#2563eb; color:white; border:none; border-radius:8px; padding:10px 20px; font-size:14px; font-weight:bold;} QPushButton:hover{background:#1d4ed8;}")
+        self.prep_btn.clicked.connect(self._prepare)
+        form.addRow("", self.prep_btn)
+
+        card.add_widget(form_w)
         lay.addWidget(card)
+        
+        warn = QLabel("Note: Preparing a router registers it on the database and generates an Activation Key. This key is emailed to the recipient and is required to onboard a new Master user.")
+        warn.setWordWrap(True)
+        warn.setStyleSheet("background:#eff6ff; color:#1e40af; border:1px solid #bfdbfe; border-radius:8px; padding:12px; font-size:13px;")
+        lay.addWidget(warn)
         lay.addStretch()
 
     def refresh(self):
-        self._w = Worker(self.api.get_admin_keys)
-        self._w.result.connect(self._on_data)
-        self._w.error.connect(self._alert.show_error)
+        pass
+
+    def _prepare(self):
+        router_id = self.router_id_in.text().strip()
+        serial = self.serial_in.text().strip()
+        mac = self.mac_in.text().strip()
+        zt_id = self.zt_in.text().strip()
+        email = self.email_in.text().strip()
+        
+        if not router_id or not serial or not mac or not zt_id or not email:
+            self._alert.show_error("All fields are required")
+            return
+            
+        self.prep_btn.setEnabled(False)
+        self.prep_btn.setText("Preparing...")
+        
+        self._w = Worker(self.api.prepare_router, router_id, serial, mac, email, zt_id)
+        self._w.result.connect(self._on_success)
+        self._w.error.connect(self._on_error)
         self._w.start()
 
-    def _on_data(self, keys: list):
-        t = self._tbl
-        t.setUpdatesEnabled(False)
-        t.setRowCount(0)
-        for i, row in enumerate(keys):
-            r = t.rowCount(); t.insertRow(r)
-            t.setItem(r, 0, table_item(str(i + 1)))
-            t.setItem(r, 1, table_item(row.get("key_code", "")))
-            t.setItem(r, 2, table_item(row.get("company_name", "")))
-            t.setItem(r, 3, table_item(_fmt_date(row.get("created_at", ""))))
-            is_used = row.get("is_used", False)
-            t.setItem(r, 4, table_item("Used" if is_used else "Unused"))
+    def _on_success(self, data):
+        self.prep_btn.setEnabled(True)
+        self.prep_btn.setText("Prepare Router & Send Key")
+        
+        # Clear fields
+        self.router_id_in.clear()
+        self.serial_in.clear()
+        self.mac_in.clear()
+        self.zt_in.clear()
+        self.email_in.clear()
+        
+        # Show key popup
+        key_code = data.get("key_code", "PXKEY-...")
+        # Since prepare_router backend response doesn't always contain key_code in stats (it sends it via email),
+        # but wait, let's verify if the key_code is in database activation_key table: yes, the backend prepare_router endpoint
+        # returns the router info. Oh, does the backend endpoint return key_code?
+        # Let's check admin.py prepare_router response:
+        # return { "id": new_router.id, "router_id": new_router.router_id, ... }
+        # Ah! It does NOT return key_code in the JSON response to prevent exposing it if emailed!
+        # Wait, but wait: the backend can return key_code or we can display a success notification.
+        # Let's see: yes! "Router prepared successfully. Activation key has been sent to customer's email."
+        self._alert.show_success("Router prepared successfully! Activation key sent via email.")
+        
+        QMessageBox.information(self, "Success", "Router prepared successfully!\n\nThe activation key has been dispatched to the recipient's email address.")
 
-            btn_w = QWidget()
-            btn_w.setStyleSheet("background:white")
-            btn_l = QHBoxLayout(btn_w)
-            btn_l.setContentsMargins(14, 11, 10, 11)
-            btn_l.setSpacing(8)
-            if not is_used:
-                _ss_copy = (
-                    "QPushButton{background:white;color:#0f172a;border:1px solid #e2e8f0;"
-                    "border-radius:6px;font-size:12px;padding:0px;outline:none}"
-                    "QPushButton:hover{background:#f8fafc}"
-                )
-                _ss_del = (
-                    "QPushButton{background:white;color:#dc2626;border:1px solid #fecaca;"
-                    "border-radius:6px;font-size:12px;padding:0px;outline:none}"
-                    "QPushButton:hover{background:#fee2e2}"
-                )
-                copy_btn = QPushButton("Copy")
-                copy_btn.setFixedSize(58, 30)
-                copy_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-                copy_btn.setStyleSheet(_ss_copy)
-                key_code = row.get("key_code", "")
-                copy_btn.clicked.connect(
-                    lambda _, k=key_code, b=copy_btn, ss=_ss_copy: self._copy_feedback(b, k, ss)
-                )
-                btn_l.addWidget(copy_btn)
-                del_btn = QPushButton("Delete")
-                del_btn.setFixedSize(62, 30)
-                del_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-                del_btn.setStyleSheet(_ss_del)
-                del_btn.clicked.connect(lambda _, kid=row["id"]: self._delete_key(kid))
-                btn_l.addWidget(del_btn)
-            btn_l.addStretch()
-            t.setCellWidget(r, 5, btn_w)
-        # Guarantee every row is tall enough for the 30px action buttons
-        # (button 30px + 11px top + 11px bottom = 52px; row 54px adds 2px slack)
-        for rr in range(t.rowCount()):
-            t.setRowHeight(rr, 54)
-        t.setUpdatesEnabled(True)
-
-    def _generate_key(self):
-        self._tw = Worker(self.api.get_admin_tenants)
-        self._tw.result.connect(self._show_gen_dialog)
-        self._tw.error.connect(self._alert.show_error)
-        self._tw.start()
-
-    def _show_gen_dialog(self, tenants: list):
-        dlg = QDialog(self.window())
-        dlg.setWindowTitle("Generate Activation Key")
-        dlg.setFixedSize(440, 340)
-        dlg.setStyleSheet("QDialog{background:#f1f5f9} QLabel{background:transparent;color:#0f172a} QComboBox{background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:9px;font-size:14px;color:#0f172a}")
-        lay = QVBoxLayout(dlg)
-        lay.setContentsMargins(28, 28, 28, 28)
-        lay.setSpacing(14)
-        lay.addWidget(_lbl("Select Tenant", bold=True))
-        combo = QComboBox()
-        combo.addItem("— Choose a tenant —", None)
-        for t in tenants:
-            label = t["company_name"] + (f" · {t['city']}" if t.get("city") else "")
-            combo.addItem(label, t["id"])
-        lay.addWidget(combo)
-
-        result_lbl = QLabel("")
-        result_lbl.setStyleSheet("background:#dbeafe;color:#1d4ed8;border-radius:8px;padding:10px 14px;font-size:14px;font-family:monospace;font-weight:700")
-        result_lbl.setVisible(False)
-        lay.addWidget(result_lbl)
-
-        btns = QHBoxLayout()
-        gen_btn = QPushButton("Generate")
-        gen_btn.setStyleSheet("QPushButton{background:#2563eb;color:white;border:none;border-radius:8px;padding:9px 18px;font-size:14px;font-weight:600} QPushButton:hover{background:#1d4ed8}")
-        close_btn = QPushButton("Close")
-        close_btn.setStyleSheet("QPushButton{background:white;color:#0f172a;border:1px solid #e2e8f0;border-radius:8px;padding:9px 18px;font-size:14px} QPushButton:hover{background:#f8fafc}")
-        close_btn.clicked.connect(lambda: (dlg.accept(), self.refresh()))
-        btns.addWidget(gen_btn); btns.addWidget(close_btn)
-        lay.addLayout(btns)
-
-        def do_gen():
-            tid = combo.currentData()
-            if tid is None: return
-            gen_btn.setEnabled(False); gen_btn.setText("Generating…")
-            self._gw = Worker(self.api.generate_key, tid)
-            def on_ok(data):
-                result_lbl.setText(f"✓  {data.get('key_code', '')}")
-                result_lbl.setVisible(True)
-                gen_btn.setEnabled(True); gen_btn.setText("Generate Another")
-                # pyrefly: ignore [missing-attribute]
-                QApplication.clipboard().setText(data.get("key_code", ""))
-            self._gw.result.connect(on_ok)
-            self._gw.error.connect(lambda e: (self._alert.show_error(e), gen_btn.setEnabled(True), gen_btn.setText("Generate")))
-            self._gw.start()
-
-        gen_btn.clicked.connect(do_gen)
-        dlg.exec()
-
-    def _delete_key(self, kid: int):
-        if QMessageBox.question(self.window(), "Delete Key", "Delete this key? It can no longer be used.",
-                                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
-            return
-        self._dw = Worker(self.api.delete_key, kid)
-        self._dw.result.connect(lambda _: (self.refresh(), self._alert.show_success("Key deleted")))
-        self._dw.error.connect(self._alert.show_error)
-        self._dw.start()
-
-    def _copy_feedback(self, btn, key_code: str, orig_ss: str):
-        """Copy the key and flash the button green with a ✓ for clear feedback."""
-        # pyrefly: ignore [missing-attribute]
-        QApplication.clipboard().setText(key_code)
-        self._alert.show_success("Activation key copied to clipboard")
-        btn.setText("✓ Copied")
-        btn.setStyleSheet(
-            "QPushButton{background:#dcfce7;color:#15803d;border:1px solid #bbf7d0;"
-            "border-radius:6px;font-size:12px;padding:0px;outline:none}"
-        )
-
-        def _reset():
-            try:
-                btn.setText("Copy")
-                btn.setStyleSheet(orig_ss)
-            except RuntimeError:
-                pass  # row may have been rebuilt by a refresh
-
-        QTimer.singleShot(1500, _reset)
+    def _on_error(self, err):
+        self.prep_btn.setEnabled(True)
+        self.prep_btn.setText("Prepare Router & Send Key")
+        self._alert.show_error(err)
 
 
-class OwnerAuditPage(QWidget):
+
+class ActivationKeysPage(QWidget):
     def __init__(self, api):
         super().__init__()
         self.api = api
-        self._logs = []
+        self._keys = []
         self._build()
 
     def _build(self):
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(20)
-        lay.addWidget(PageHeader("Audit Log", "Full traceability of all platform actions"))
 
-        card = CardWithHeader("Activity History")
-        top_row = QHBoxLayout()
-        top_row.setContentsMargins(16, 12, 16, 0)
-        top_row.addStretch()
+        self._alert = AlertBar()
+        lay.addWidget(self._alert)
+
+        lay.addWidget(PageHeader("Activation Keys", "View and manage all router activation keys"))
+
+        card = CardWithHeader("All Keys")
         
-        self._level_filter = QComboBox()
-        
-        from PyQt6.QtWidgets import QDateEdit
-        from PyQt6.QtCore import QDate
-        
-        # From Date
-        self._from_date = QDateEdit()
-        self._from_date.setCalendarPopup(True)
-        self._from_date.setDate(QDate.currentDate().addDays(-30))
-        self._from_date.setStyleSheet("QDateEdit{background:white;border:1px solid #cbd5e1;border-radius:6px;padding:4px;font-size:13px;}")
-        self._from_date.dateChanged.connect(self.refresh)
-        top_row.addWidget(QLabel("From:"))
-        top_row.addWidget(self._from_date)
-        
-        # To Date
-        self._to_date = QDateEdit()
-        self._to_date.setCalendarPopup(True)
-        self._to_date.setDate(QDate.currentDate())
-        self._to_date.setStyleSheet("QDateEdit{background:white;border:1px solid #cbd5e1;border-radius:6px;padding:4px;font-size:13px;}")
-        self._to_date.dateChanged.connect(self.refresh)
-        top_row.addWidget(QLabel("To:"))
-        top_row.addWidget(self._to_date)
-        
-        self._level_filter.addItems(["All Levels", "info", "success", "warning", "error"])
-        self._level_filter.setStyleSheet("QComboBox{background:white;border:1px solid #cbd5e1;border-radius:6px;padding:4px;font-size:13px;}")
-        self._level_filter.currentTextChanged.connect(self._apply_filter)
-        top_row.addWidget(self._level_filter)
-        
-        self._filter_in = QLineEdit()
-        self._filter_in.setPlaceholderText("Filter logs...")
-        self._filter_in.setFixedWidth(200)
-        self._filter_in.textChanged.connect(self._apply_filter)
-        top_row.addWidget(self._filter_in)
-        
-        self._export_btn = QPushButton("Export CSV")
-        self._export_btn.setObjectName("btn-primary")
-        self._export_btn.setStyleSheet("QPushButton{background:#2563eb;color:white;border:none;border-radius:6px;padding:5px 12px;font-size:13px} QPushButton:hover{background:#1d4ed8}")
-        self._export_btn.clicked.connect(self._export_csv)
-        top_row.addWidget(self._export_btn)
-        card.add_layout(top_row)
-        self._tbl = make_table(["Description", "By", "Date", "Level"])
+        self._tbl = make_table(["KEY CODE", "ROUTER ID", "SERIAL NUMBER", "STATUS", "PREPARED AT", "ACTIONS"])
         hh = self._tbl.horizontalHeader()
         hh.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        hh.setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
+        hh.setSectionResizeMode(1, QHeaderView.ResizeMode.Interactive)
+        hh.setSectionResizeMode(2, QHeaderView.ResizeMode.Interactive)
+        hh.setSectionResizeMode(3, QHeaderView.ResizeMode.Interactive)
+        hh.setSectionResizeMode(4, QHeaderView.ResizeMode.Interactive)
+        hh.setSectionResizeMode(5, QHeaderView.ResizeMode.Fixed)
         self._tbl.setColumnWidth(1, 140)
-        hh.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
-        self._tbl.setColumnWidth(2, 180)
-        hh.setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
-        self._tbl.setColumnWidth(3, 120)
+        self._tbl.setColumnWidth(2, 140)
+        self._tbl.setColumnWidth(3, 100)
+        self._tbl.setColumnWidth(4, 160)
+        self._tbl.setColumnWidth(5, 200)
+
         card.add_widget(self._tbl)
         lay.addWidget(card)
         lay.addStretch()
 
     def refresh(self):
-        from_date = None
-        to_date = None
-        if hasattr(self, '_from_date'):
-            from_date = self._from_date.date().toString("yyyy-MM-dd") + "T00:00:00"
-            to_date = self._to_date.date().toString("yyyy-MM-dd") + "T23:59:59"
-        self._w = Worker(self.api.get_admin_audit_logs, from_date, to_date)
+        self._w = Worker(self.api.get_all_activation_keys)
         self._w.result.connect(self._on_data)
-        self._w.error.connect(lambda e: print("Audit error:", e))
+        self._w.error.connect(lambda e: self._alert.show_error(str(e)))
         self._w.start()
 
-    def _on_data(self, logs: list):
-        self._logs = logs
-        self._apply_filter(self._filter_in.text() if hasattr(self, "_filter_in") else "")
-
-    def _apply_filter(self, *args):
-        logs = getattr(self, "_logs", [])
-        query = (self._filter_in.text() if hasattr(self, "_filter_in") else "").strip().lower()
-        level_filter = (self._level_filter.currentText() if hasattr(self, "_level_filter") else "All Levels")
-        
+    def _on_data(self, keys: list):
+        self._keys = keys
         t = self._tbl
         t.setUpdatesEnabled(False)
         t.setRowCount(0)
-        for log in logs:
-            lvl = log.get("level", "info")
-            if level_filter != "All Levels" and lvl.lower() != level_filter.lower():
-                continue
-                
-            haystack = " ".join([
-                str(log.get("description", "")),
-                str(log.get("user_name", "")),
-                str(lvl),
-            ]).lower()
-            if query and query not in haystack:
-                continue
-            r = t.rowCount(); t.insertRow(r)
-            t.setItem(r, 0, table_item(log.get("description", "")))
-            t.setItem(r, 1, table_item(log.get("user_name") or "System"))
-            t.setItem(r, 2, table_item(_fmt_date(log.get("created_at", ""))))
-            lvl = log.get("level", "info")
-            bg, fg = LEVEL_COLORS.get(lvl, ("#dbeafe", "#1d4ed8"))
-            lbl_w = QWidget()
-            lbl_l = QHBoxLayout(lbl_w)
-            lbl_l.setContentsMargins(8, 0, 8, 0)
-            badge = QLabel(lvl.title())
-            badge.setFixedHeight(22)
-            badge.setContentsMargins(10, 2, 10, 2)
-            badge.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignCenter)
-            badge.setStyleSheet(
-                f"QLabel{{background:{bg};color:{fg};border-radius:11px;"
-                f"font-size:12px;font-weight:600}}"
-            )
-            lbl_l.addWidget(badge)
-            lbl_l.addStretch()
-            t.setCellWidget(r, 3, lbl_w)
-        t.setUpdatesEnabled(True)
-        from PyQt6.QtCore import QTimer
-        QTimer.singleShot(0, lambda: t.horizontalHeader().resizeSection(3, 120))
+        for key in keys:
+            r = t.rowCount()
+            t.insertRow(r)
+            t.setItem(r, 0, table_item(key.get("key_code", "")))
+            t.setItem(r, 1, table_item(key.get("router_id", "—")))
+            t.setItem(r, 2, table_item(key.get("serial_number", "—")))
+            is_used = key.get("is_used", False)
+            t.setItem(r, 3, table_item("Used" if is_used else "Unused"))
+            t.setItem(r, 4, table_item(_fmt_date(key.get("prepared_at", ""))))
 
-    def _export_csv(self):
-        self._export_btn.setText("Exporting...")
-        self._export_btn.setEnabled(False)
-        def _do_export():
-            try:
-                csv_data = self.api.export_audit_logs()
-                return csv_data
-            except Exception as e:
-                raise e
+            btn_w = QWidget()
+            btn_w.setStyleSheet("background:white")
+            btn_l = QHBoxLayout(btn_w)
+            btn_l.setContentsMargins(6, 6, 6, 6)
+            btn_l.setSpacing(6)
+            
+            if not is_used:
+                resend_btn = QPushButton("Resend")
+                resend_btn.setFixedSize(60, 28)
+                resend_btn.setStyleSheet(
+                    "QPushButton{background:white;color:#2563eb;border:1px solid #bfdbfe;"
+                    "border-radius:6px;padding:0px;font-size:12px} QPushButton:hover{background:#eff6ff}"
+                )
+                resend_btn.clicked.connect(lambda _, kid=key["id"], kc=key["key_code"]: self._resend_key(kid, kc))
+                btn_l.addWidget(resend_btn)
                 
-        def on_ok(csv_data):
-            self._export_btn.setText("Export CSV")
-            self._export_btn.setEnabled(True)
-            from PyQt6.QtWidgets import QFileDialog
-            path, _ = QFileDialog.getSaveFileName(self, "Save Audit Logs", "audit_logs.csv", "CSV Files (*.csv)")
-            if path:
-                try:
-                    with open(path, "w", encoding="utf-8") as f:
-                        f.write(csv_data)
-                except Exception as e:
-                    print("Failed to save CSV:", e)
-                    
-        self._ew = Worker(_do_export)
-        self._ew.result.connect(on_ok)
-        self._ew.error.connect(lambda e: (self._export_btn.setText("Export CSV"), self._export_btn.setEnabled(True), print("Export error:", e)))
-        self._ew.start()
+            del_btn = QPushButton("Delete")
+            del_btn.setFixedSize(60, 28)
+            del_btn.setStyleSheet(
+                "QPushButton{background:white;color:#dc2626;border:1px solid #fecaca;"
+                "border-radius:6px;padding:0px;font-size:12px} QPushButton:hover{background:#fee2e2}"
+            )
+            del_btn.clicked.connect(lambda _, kid=key["id"]: self._delete_key(kid))
+            btn_l.addWidget(del_btn)
+            
+            btn_l.addStretch()
+            t.setCellWidget(r, 5, btn_w)
+
+        for rr in range(t.rowCount()):
+            t.setRowHeight(rr, 54)
+        t.setUpdatesEnabled(True)
+
+        row_height = 54
+        header_height = 42
+        num_rows = len(keys)
+        total_height = header_height + (num_rows * row_height) + 2 if num_rows > 0 else header_height + 2
+        t.setFixedHeight(total_height)
+
+    def _resend_key(self, key_id: int, key_code: str):
+        from PyQt6.QtWidgets import QInputDialog
+        email, ok = QInputDialog.getText(
+            self, "Resend Activation Key", 
+            f"Enter recipient email for key {key_code}:"
+        )
+        if not ok or not email.strip():
+            return
+
+        self._alert.show_success("Resending key...")
+        self._rw = Worker(self.api.resend_activation_key, key_id, email.strip())
+        self._rw.result.connect(lambda data: self._alert.show_success("Activation key email resent successfully!"))
+        self._rw.error.connect(lambda err: self._alert.show_error(str(err)))
+        self._rw.start()
+
+    def _delete_key(self, key_id: int):
+        if not _confirm_delete(self, "Delete Key", "Are you sure you want to delete this activation key?"):
+            return
+        self._alert.show_success("Deleting key...")
+        self._dw = Worker(self.api.delete_activation_key, key_id)
+        def on_done(_):
+            self._alert.show_success("Key deleted")
+            self.refresh()
+        self._dw.result.connect(on_done)
+        self._dw.error.connect(lambda err: self._alert.show_error(str(err)))
+        self._dw.start()
 class OwnerUsersPage(QWidget):
     def __init__(self, api):
         super().__init__()
@@ -1358,9 +1178,8 @@ class OwnerWindow(QMainWindow):
         nav_items = [
             ("dashboard", asset_path("grid.svg"), "Dashboard"),
             ("tenants",   asset_path("users.svg"), "Tenants"),
-            ("users",     asset_path("users.svg"), "Users"),
-            ("keys",      asset_path("key.svg"), "Activation Keys"),
-            ("audit",     asset_path("file.svg"), "Audit Log"),
+            ("keys",      asset_path("key.svg"), "Router Preparation"),
+            ("activation_keys", asset_path("key.svg"), "Activation Keys"),
             ("settings",  asset_path("settings.svg"), "Settings"),
         ]
         self._nav_btns = {}
@@ -1411,14 +1230,12 @@ class OwnerWindow(QMainWindow):
                 self.api,
                 on_new_tenant=self._open_new_tenant,
                 on_view_tenants=lambda: self._nav("tenants"),
-                on_manage_keys=lambda: self._nav("keys"),
-                on_full_log=lambda: self._nav("audit"),
+                on_manage_keys=lambda: self._nav("activation_keys"),
             ),
-            "tenants":   TenantsPage(self.api),
-            "users":     OwnerUsersPage(self.api),
-            "keys":      KeysPage(self.api),
-            "audit":     OwnerAuditPage(self.api),
-            "settings":  OwnerSettingsPage(self.api),
+            "tenants":      TenantsPage(self.api),
+            "keys":         KeysPage(self.api),
+            "activation_keys": ActivationKeysPage(self.api),
+            "settings":     OwnerSettingsPage(self.api),
         }
         for p in self._pages.values():
             self._stack.addWidget(p)
