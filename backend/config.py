@@ -31,12 +31,19 @@ class Settings(BaseSettings):
     # Field encryption (Fernet key for PendingValidation.key_code_submitted)
     FIELD_ENCRYPTION_KEY: str = ""
 
+    # Provisioning
+    MAX_PROVISIONING_RETRIES: int = 3
+
     APP_NAME: str = "SetuLink"
     APP_VERSION: str = "2.0.0"
 
-    class Config:
-        env_file = _ENV_FILE
-        extra = "ignore"
+    # Gateway Phase 6 fallback
+    GATEWAY_PUBKEY: str = "q1z1P+nKkx2gW7dD2d2e1A0O1H/I6+tT6eM1yA9o/zM="
+
+    model_config = {
+        "env_file": _ENV_FILE,
+        "extra": "ignore"
+    }
 
 
 @lru_cache

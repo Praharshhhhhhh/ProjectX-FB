@@ -9,6 +9,7 @@ from services.auth_service import hash_password
 import secrets
 import string
 import uuid
+from services.email_service import send_new_user_email
 
 router = APIRouter(prefix="/api/users", tags=["users"])
 
@@ -58,6 +59,10 @@ def create_user(req: UserCreate, current_user: Annotated[User, Depends(require_m
     db.add(user)
     db.commit()
     db.refresh(user)
+
+    # Send the temporary password via email
+    if password:
+        send_new_user_email(req.email, password)
 
     return {"id": user.id, "email": user.email, "role": user.role, "temp_password": password}
 

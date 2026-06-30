@@ -37,19 +37,13 @@ def setup_test_settings():
 
 @pytest.fixture(scope="function")
 def db_session():
-    # Make sure we use the same engine that the database module uses so dependency override works
     from database import engine
-    engine.dispose()
     
-    db_file = "test_database.db"
-    if os.path.exists(db_file):
-        try:
-            os.remove(db_file)
-        except Exception:
-            pass
-            
+    # Clean up tables if they exist
+    Base.metadata.drop_all(bind=engine, checkfirst=True)
+    
     TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    Base.metadata.create_all(bind=engine)
+    Base.metadata.create_all(bind=engine, checkfirst=True)
     
     # Seed owner user
     from models.user import User, UserRole
@@ -57,15 +51,24 @@ def db_session():
     import uuid
     
     db = TestingSessionLocal()
+    tenant = models.tenant.Tenant(company_name="System Tenant")
+    db.add(tenant)
+    db.commit()
+    
     owner = User(
         email="owner@setulink.io",
         full_name="System Owner",
         hashed_password=hash_password("Admin@123"),
         role=UserRole.system_owner,
         is_active=True,
-        uuid=uuid.uuid4().hex
+        uuid=uuid.uuid4().hex,
+        tenant_id=tenant.id
     )
     db.add(owner)
+    
+    alloc = models.table_allocator.TableAllocator(next_wg_ip_octet=2)
+    db.add(alloc)
+    
     db.commit()
     db.close()
 
@@ -74,12 +77,7 @@ def db_session():
         yield db
     finally:
         db.close()
-        engine.dispose()
-        if os.path.exists(db_file):
-            try:
-                os.remove(db_file)
-            except Exception:
-                pass
+        Base.metadata.drop_all(bind=engine, checkfirst=True)
 
 @pytest.fixture(scope="function")
 def client(db_session):
@@ -97,3 +95,10 @@ def client(db_session):
 def mock_email():
     with patch("services.email_service.send_email") as mock:
         yield mock
+
+@pytest.fixture(scope="function", autouse=True)
+def mock_requests():
+    with patch("requests.post") as mock_post, patch("requests.delete") as mock_delete:
+        mock_post.return_value.status_code = 200
+        mock_delete.return_value.status_code = 200
+        yield mock_post, mock_delete

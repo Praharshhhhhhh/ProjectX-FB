@@ -216,24 +216,24 @@ def test_pending_validation_only_visible_to_claiming_user(client, db_session):
     assert len(res2.json()) == 0
 
 def test_share_disabled_while_pending_validation(client, db_session):
-    _, master, _, _, _ = _setup_tenant_and_users(db_session)
+    _, master, _, admin, _ = _setup_tenant_and_users(db_session)
     router, _ = _setup_router(db_session)
 
     router.status = RouterStatus.pending_validation
     db_session.commit()
 
-    res = client.post(f"/api/routers/{router.id}/share", headers=_headers(master))
+    res = client.post(f"/api/routers/{router.id}/share", json={"user_id": admin.id}, headers=_headers(master))
     assert res.status_code == 403
     assert "sharing is unavailable" in res.json()["detail"]
 
 def test_share_enabled_after_claimed(client, db_session):
-    _, master, _, _, _ = _setup_tenant_and_users(db_session)
+    _, master, _, admin, _ = _setup_tenant_and_users(db_session)
     router, _ = _setup_router(db_session)
 
     router.status = RouterStatus.claimed
     db_session.commit()
 
-    res = client.post(f"/api/routers/{router.id}/share", headers=_headers(master))
+    res = client.post(f"/api/routers/{router.id}/share", json={"user_id": admin.id}, headers=_headers(master))
     assert res.status_code == 200
 
 def test_sync_completes_pending_validation_and_marks_claimed(client, db_session):
@@ -316,7 +316,9 @@ def test_concurrent_claim_attempts_only_one_succeeds(db_session):
                 # Retrieve fresh user object
                 user_obj = db.query(User).filter(User.id == user_id).first()
                 from services.router_claim_service import claim_router as service_claim
-                service_claim(db, user_obj, router_serial, key_code)
+                from fastapi import BackgroundTasks
+                bg_tasks = BackgroundTasks()
+                service_claim(db, user_obj, router_serial, key_code, bg_tasks)
                 results.append("success")
             except Exception as e:
                 results.append(str(e))

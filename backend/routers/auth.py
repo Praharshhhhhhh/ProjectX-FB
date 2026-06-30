@@ -220,7 +220,14 @@ def activate_master(req: ActivateKeyRequest, db: Session = Depends(get_db)):
     tenant.master_activation_key = None
     db.commit()
     
-    return {"message": "Master Account activated successfully. You can now log in."}
+    token = auth_service.create_access_token({
+        "user_id": master_user.id,
+        "uuid": master_user.uuid,
+        "role": master_user.role,
+        "tenant_id": master_user.tenant_id,
+    })
+    
+    return Token(access_token=token, role=master_user.role)
 
 
 @router.get("/me")

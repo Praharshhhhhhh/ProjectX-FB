@@ -12,7 +12,12 @@ import httpx
 from styles import ROLE_COLORS, STATUS_COLORS, LEVEL_COLORS
 
 
-ASSET_DIR = Path(__file__).resolve().parent.parent / "assets"
+import sys
+
+if getattr(sys, 'frozen', False):
+    ASSET_DIR = Path(sys._MEIPASS) / "assets"
+else:
+    ASSET_DIR = Path(__file__).resolve().parent.parent / "assets"
 
 
 def asset_path(name: str) -> Path:

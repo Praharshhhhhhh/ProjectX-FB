@@ -76,3 +76,17 @@ Activation Key: {activation_key}
 Open the SetuLink desktop app and click "Activate Master Account" to proceed.
 """,
     )
+
+def send_new_user_email(to: str, temp_password: str) -> None:
+    send_email(
+        to,
+        "Welcome to SetuLink - Your Account Details",
+        f"""Hello,
+
+An account has been created for you on the SetuLink platform.
+
+Your temporary password is: {temp_password}
+
+Please log in and change your password immediately.
+"""
+    )

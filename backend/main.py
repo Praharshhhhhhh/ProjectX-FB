@@ -11,6 +11,8 @@ from config import get_settings
 from database import Base, engine
 from models import User, UserRole
 from services.auth_service import hash_password
+from apscheduler.schedulers.background import BackgroundScheduler
+from services.gateway_provisioning_service import resync_gateway_state, reconcile_gateway_peers, prune_stale_desktop_peers
 import models  # ensure all models are imported before create_all
 
 from routers import auth, admin, users
@@ -23,7 +25,13 @@ settings = get_settings()
 async def lifespan(app: FastAPI):
     Base.metadata.create_all(bind=engine)
     _seed_system_owner()
+    scheduler = BackgroundScheduler()
+    scheduler.add_job(resync_gateway_state, 'interval', seconds=30)
+    scheduler.add_job(reconcile_gateway_peers, 'interval', seconds=60)
+    scheduler.add_job(prune_stale_desktop_peers, 'interval', seconds=60)
+    scheduler.start()
     yield
+    scheduler.shutdown()
 
 
 app = FastAPI(
@@ -42,7 +50,7 @@ app.add_middleware(
 )
 
 # ─── API Routers ───────────────────────────────────────────────────────────────
-for r in [auth.router, admin.router, users.router, routers_router.router]:
+for r in [auth.router, admin.router, users.router, routers_router.router, routers_router.desktop_router]:
     app.include_router(r)
 
 
@@ -52,7 +60,7 @@ def _seed_system_owner():
     from database import SessionLocal
     db = SessionLocal()
     try:
-        owner = db.query(User).filter(User.role == UserRole.system_owner).first()
+        owner = db.query(User).filter(User.email == settings.OWNER_EMAIL).first()
         if not owner:
             import uuid
             owner = User(
@@ -66,6 +74,15 @@ def _seed_system_owner():
             db.add(owner)
             db.commit()
             print("System Owner created")
+            
+        # Seed TableAllocator if missing
+        from models.table_allocator import TableAllocator
+        alloc = db.query(TableAllocator).first()
+        if not alloc:
+            db.add(TableAllocator(next_wg_ip_octet=2, next_table_id=100))
+            db.commit()
+            print("TableAllocator seeded")
+            
     finally:
         db.close()
 

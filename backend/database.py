@@ -7,10 +7,13 @@ settings = get_settings()
 db_url = settings.DATABASE_URL
 connect_args = {}
 
+from sqlalchemy.pool import NullPool
+
 if db_url.startswith("sqlite"):
     connect_args = {"check_same_thread": False}
-
-engine = create_engine(db_url, connect_args=connect_args)
+    engine = create_engine(db_url, connect_args=connect_args, poolclass=NullPool)
+else:
+    engine = create_engine(db_url, connect_args=connect_args)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 

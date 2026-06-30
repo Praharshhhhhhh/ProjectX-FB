@@ -104,9 +104,10 @@ class OwnerDashboardPage(QWidget):
         self._keys_vlay.setSpacing(0)
         self._keys_vlay.addStretch()
         self._keys_card.add_widget(self._keys_list)
-        bottom.addWidget(self._keys_card, alignment=Qt.AlignmentFlag.AlignTop)
+        self._keys_card.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
+        self._keys_card._layout.setAlignment(Qt.AlignmentFlag(0))
+        bottom.addWidget(self._keys_card)
         self._layout.addLayout(bottom)
-        self._layout.addStretch()
 
         scroll.setWidget(inner)
         root_lay = QVBoxLayout(self)
@@ -173,27 +174,33 @@ class OwnerDashboardPage(QWidget):
                 # pyrefly: ignore [missing-attribute]
                 item.widget().deleteLater()
 
-        for row in keys[:3]:
-            row_w = QWidget()
-            row_w.setStyleSheet("border-bottom:1px solid #f1f5f9")
-            rl = QHBoxLayout(row_w)
-            rl.setContentsMargins(16, 12, 16, 12)
-            rl.setSpacing(10)
-            text_col = QVBoxLayout()
-            key_lbl = QLabel(row.get("key_code", ""))
-            key_lbl.setStyleSheet("font-size:13px;color:#0f172a;font-weight:600;background:transparent")
-            meta = QLabel(f"{row.get('company_name', '—')} · {_fmt_date(row.get('created_at', ''))}")
-            meta.setStyleSheet("font-size:11px;color:#64748b;background:transparent")
-            text_col.addWidget(key_lbl)
-            text_col.addWidget(meta)
-            rl.addLayout(text_col)
-            rl.addStretch()
-            used = row.get("is_used")
-            bg, fg = ("#f1f5f9", "#64748b") if used else ("#dbeafe", "#1d4ed8")
-            status = QLabel("Used" if used else "Unused")
-            status.setStyleSheet(f"background:{bg};color:{fg};padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600")
-            rl.addWidget(status)
-            self._keys_vlay.insertWidget(self._keys_vlay.count() - 1, row_w)
+        if not keys:
+            empty = QLabel("No keys generated yet.")
+            empty.setStyleSheet("font-size:13px;color:#64748b;padding:20px;background:transparent;")
+            empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self._keys_vlay.insertWidget(0, empty)
+        else:
+            for row in keys[:8]:
+                row_w = QWidget()
+                row_w.setStyleSheet("border-bottom:1px solid #f1f5f9")
+                rl = QHBoxLayout(row_w)
+                rl.setContentsMargins(16, 12, 16, 12)
+                rl.setSpacing(10)
+                text_col = QVBoxLayout()
+                key_lbl = QLabel(row.get("key_code", ""))
+                key_lbl.setStyleSheet("font-size:13px;color:#0f172a;font-weight:600;background:transparent")
+                meta = QLabel(f"{row.get('company_name', '—')} · {_fmt_date(row.get('created_at', ''))}")
+                meta.setStyleSheet("font-size:11px;color:#64748b;background:transparent")
+                text_col.addWidget(key_lbl)
+                text_col.addWidget(meta)
+                rl.addLayout(text_col)
+                rl.addStretch()
+                used = row.get("is_used")
+                bg, fg = ("#f1f5f9", "#64748b") if used else ("#dbeafe", "#1d4ed8")
+                status = QLabel("Used" if used else "Unused")
+                status.setStyleSheet(f"background:{bg};color:{fg};padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600")
+                rl.addWidget(status)
+                self._keys_vlay.insertWidget(self._keys_vlay.count() - 1, row_w)
 
     def _delete_tenant(self, tid: int, name: str):
         if QMessageBox.question(self.window(), "Confirm Delete", f"Are you sure you want to delete tenant '{name}'? This will delete all associated data.",
@@ -1271,6 +1278,11 @@ class OwnerWindow(QMainWindow):
         self._nav(previous, push_history=False)
 
     def _logout(self):
+        from services.wireguard_local import wireguard_local
+        try:
+            wireguard_local.stop_tunnel()
+        except Exception:
+            pass
         self.api.token = None
         self.logged_out.emit()
         self.close()

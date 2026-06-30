@@ -4,9 +4,12 @@ from sqlalchemy.orm import Session
 from models.router import Router, RouterStatus
 from models.activation_key import ActivationKey
 from models import User
+from fastapi import BackgroundTasks
+from models.subnet_registry import SubnetRegistry
+from services.gateway_provisioning_service import provision_router_task
 
 
-def claim_router(db: Session, current_user: User, serial_number: str, activation_key: str) -> Router:
+def claim_router(db: Session, current_user: User, serial_number: str, activation_key: str, bg_tasks: BackgroundTasks) -> Router:
     """Claim a router with exact validation order per spec §11."""
     if db.bind.dialect.name == "sqlite":
         from sqlalchemy import text
@@ -49,6 +52,19 @@ def claim_router(db: Session, current_user: User, serial_number: str, activation
     key.used_by_user_id = current_user.id
     key.used_at = now
 
+    # Create the SubnetRegistry row for this router
+    registry = SubnetRegistry(
+        router_id=router.id,
+        tenant_id=current_user.tenant_id,
+        lan_subnet="192.168.1.0/24"  # Default placeholder; will be updated via real router heartbeat later
+    )
+    db.add(registry)
+
     db.commit()
     db.refresh(router)
+    db.refresh(registry)
+
+    # Queue the provisioning task
+    bg_tasks.add_task(provision_router_task, registry.id)
+
     return router

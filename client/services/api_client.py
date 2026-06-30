@@ -74,6 +74,8 @@ class APIClient:
         self._user = None
 
     def _queue_offline_action(self, action: str, payload: dict):
+        if self._user:
+            payload["_offline_user_id"] = self._user.get("id")
         from services.cache_service import cache_service
         cache_service.add_offline_action(action, payload)
 
@@ -100,7 +102,9 @@ class APIClient:
                 elif action == "sync_router":
                     self._req("POST", f"/api/routers/{payload['router_id']}/sync")
                 elif action == "share_router":
-                    self._req("POST", f"/api/routers/{payload['router_id']}/share")
+                    self._req("POST", f"/api/routers/{payload['router_id']}/share", json={
+                        "user_id": payload.get("user_id")
+                    })
                 elif action == "change_password":
                     self._req("POST", "/api/auth/change-password", json={
                         "new_password": payload["new_password"]
@@ -160,6 +164,12 @@ class APIClient:
         return self._req("GET", "/api/routers/")
 
     def claim_router(self, serial_number: str, activation_key: str) -> dict:
+        from services.cache_service import cache_service
+        actions = cache_service.get_offline_actions()
+        for action in actions:
+            if action["action"] == "claim_router" and action["payload"].get("serial_number") == serial_number:
+                raise Exception("This router is already in the offline queue.")
+                
         try:
             return self._req("POST", "/api/routers/claim", json={
                 "serial_number": serial_number,
@@ -214,12 +224,28 @@ class APIClient:
             self._queue_offline_action("sync_router", {"router_id": router_id})
             return {"message": "Sync queued offline"}
 
-    def share_router(self, router_id: int) -> dict:
+    def share_router(self, router_id: int, user_id: int) -> dict:
         try:
-            return self._req("POST", f"/api/routers/{router_id}/share")
+            return self._req("POST", f"/api/routers/{router_id}/share", json={"user_id": user_id})
         except (httpx.RequestError, OSError):
-            self._queue_offline_action("share_router", {"router_id": router_id})
+            self._queue_offline_action("share_router", {"router_id": router_id, "user_id": user_id})
             return {"message": "Share queued offline"}
+
+    def get_desktops(self) -> list:
+        return self._req("GET", "/api/routers/desktops")
+
+    def get_user_shares(self, user_id: int) -> list:
+        try:
+            return self._req("GET", f"/api/routers/user/{user_id}")
+        except (httpx.RequestError, OSError):
+            return []
+
+    def revoke_router_share(self, router_id: int, user_id: int) -> dict:
+        try:
+            return self._req("DELETE", f"/api/routers/{router_id}/share/{user_id}")
+        except (httpx.RequestError, OSError):
+            self._queue_offline_action("revoke_router_share", {"router_id": router_id, "user_id": user_id})
+            return {"message": "Revoke queued offline"}
 
     # ── Owner / Admin ─────────────────────────────────────────────
     def get_admin_stats(self) -> dict:
@@ -266,12 +292,14 @@ class APIClient:
         })
 
     def activate_master_account(self, key_code: str, email: str, full_name: str, password: str) -> dict:
-        return self._req("POST", "/api/auth/activate-master", json={
+        data = self._req("POST", "/api/auth/activate-master", json={
             "key_code": key_code,
             "email": email,
             "full_name": full_name,
             "password": password
         })
+        self.token = data["access_token"]
+        return data
 
     def get_users(self) -> list:
         return self._req("GET", "/api/users/")
@@ -298,6 +326,26 @@ class APIClient:
 
     def update_user_role(self, user_id: int, new_role: str) -> dict:
         return self._req("PATCH", f"/api/users/{user_id}/role", json={"new_role": new_role})
+
+
+    def register_desktop(self, public_key: str, device_name: str) -> dict:
+        return self._req("POST", "/api/desktop/register", json={
+            "public_key": public_key,
+            "device_name": device_name
+        })
+
+    def heartbeat_desktop(self, public_key: str) -> dict:
+        return self._req("POST", "/api/desktop/heartbeat", json={
+            "public_key": public_key
+        })
+
+    def disconnect_desktop(self, public_key: str) -> dict:
+        return self._req("POST", "/api/desktop/disconnect", json={
+            "public_key": public_key
+        })
+
+    def get_desktop_config(self) -> dict:
+        return self._req("GET", "/api/desktop/config")
 
 
 api = APIClient()

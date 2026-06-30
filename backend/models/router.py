@@ -27,4 +27,5 @@ class Router(Base):
     claimed_at = Column(DateTime, nullable=True)
 
     tenant = relationship("Tenant", back_populates="routers")
-    activation_key = relationship("ActivationKey", back_populates="router", uselist=False)
+    activation_key = relationship("ActivationKey", back_populates="router", uselist=False, cascade="all, delete-orphan")
+    subnet_registry = relationship("SubnetRegistry", back_populates="router", uselist=False, cascade="all, delete-orphan")
