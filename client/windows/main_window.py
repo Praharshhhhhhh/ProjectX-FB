@@ -1447,6 +1447,7 @@ class SettingsPage(QWidget):
         pl.addWidget(_lbl("Email", muted=True))
         self._email_in = QLineEdit()
         self._email_in.setText(self.user.get("email", ""))
+        self._email_in.setEnabled(False)
         pl.addWidget(self._email_in)
         
         warn_lbl = QLabel("Note: Changing your email will compulsorily disable your 2FA.")
@@ -1526,15 +1527,18 @@ class SettingsPage(QWidget):
 
     def _save_profile(self):
         new_name = self._name_in.text().strip()
-        new_email = self._email_in.text().strip()
-        if not new_name or not new_email:
-            self._alert.show_error("Name and Email cannot be empty")
+        if not new_name:
+            self._alert.show_error("Name cannot be empty")
             return
         
-        self._pw_w = Worker(self.api.update_user_profile, self.user["id"], new_email, new_name)
+        self._pw_w = Worker(self.api.update_profile, new_name)
         def on_ok(res):
+            self.user["full_name"] = new_name
+            if hasattr(self, "_sidebar"):
+                self._sidebar.set_user(self.user)
             self._alert.show_success("Profile saved")
-            self.profile_updated.emit(new_name)
+            if hasattr(self, "profile_updated"):
+                self.profile_updated.emit(new_name)
         self._pw_w.result.connect(on_ok)
         self._pw_w.error.connect(self._alert.show_error)
         self._pw_w.start()

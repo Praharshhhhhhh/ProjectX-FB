@@ -16,17 +16,17 @@ class RoutingManager:
         if not HAS_PYROUTE:
             logger.warning("pyroute2 not installed. Routing operations will be stubbed or fail.")
 
-    def add_policy_route(self, wg_peer_ip: str, lan_subnet: str, table_id: int, zt_interface: str):
+    def add_policy_route(self, wg_peer_ip: str, lan_subnet: str, table_id: int, zt_interface: str, router_zt_ip: str):
         logger.info(f"Adding ip rule from {wg_peer_ip} to {lan_subnet} lookup {table_id}")
-        logger.info(f"Adding ip route {lan_subnet} dev {zt_interface} table {table_id}")
+        logger.info(f"Adding ip route {lan_subnet} via {router_zt_ip} dev {zt_interface} table {table_id}")
         
         if HAS_PYROUTE:
             with IPRoute() as ipr:
                 try:
                     # lookup zt interface index
                     idx = ipr.link_lookup(ifname=zt_interface)[0]
-                    # add route
-                    ipr.route('add', dst=lan_subnet, oif=idx, table=table_id)
+                    # add route via router's ZT IP
+                    ipr.route('add', dst=lan_subnet, gateway=router_zt_ip, oif=idx, table=table_id)
                 except Exception as e:
                     if 'File exists' not in str(e):
                         logger.error(f"Error adding route: {e}")

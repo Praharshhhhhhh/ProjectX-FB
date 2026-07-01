@@ -104,6 +104,7 @@ class WireGuardLocal:
         _, private_key = self.generate_or_load_keys()
         
         # Build WireGuard configuration
+        allowed_ips_str = ", ".join(allowed_ips) if allowed_ips else "127.0.0.1/32"
         conf_content = f"""[Interface]
 PrivateKey = {private_key}
 Address = {wg_ip}/24
@@ -111,7 +112,7 @@ Address = {wg_ip}/24
 [Peer]
 PublicKey = {gateway_pubkey}
 Endpoint = {endpoint}
-AllowedIPs = {", ".join(allowed_ips)}
+AllowedIPs = {allowed_ips_str}
 PersistentKeepalive = 25
 """
 
@@ -129,6 +130,7 @@ PersistentKeepalive = 25
             if res_show.returncode != 0:
                 logger.info("Installing WireGuard tunnel service...")
                 # Note: wireguard.exe requires admin/elevated privileges to install service.
+                subprocess.run([WIREGUARD_EXE, "/uninstalltunnelservice", self.interface], capture_output=True)
                 subprocess.run([WIREGUARD_EXE, "/installtunnelservice", self.config_path], check=True)
             else:
                 logger.info("Syncing peer configuration...")

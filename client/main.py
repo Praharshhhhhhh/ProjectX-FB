@@ -144,8 +144,9 @@ class App:
         self._user_info  = me
         self._show_main()
         
-        # Start the background tunnel manager
-        tunnel_manager.start(self._get_device_name())
+        # Start the background tunnel manager only for tenant users
+        if me.get("role") != "system_owner":
+            tunnel_manager.start(self._get_device_name())
 
     def _show_otp_verification(self, email: str):
         self._otp = VerifyOtpWindow(api, email)
@@ -158,6 +159,9 @@ class App:
         # Once activated, key returns token directly, go fetch user info and show main
         self._user_info = api.get_me()
         self._show_main()
+        
+        if self._user_info.get("role") != "system_owner":
+            tunnel_manager.start(self._get_device_name())
 
     # ── Main portal ───────────────────────────────────────────────
     def _show_main(self):

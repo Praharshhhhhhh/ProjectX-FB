@@ -18,7 +18,7 @@ class Settings(BaseSettings):
 
     # SMTP / Email
     SMTP_HOST: str = "localhost"
-    SMTP_PORT: int = 587
+    SMTP_PORT: int = 1025
     SMTP_USER: str = ""
     SMTP_PASSWORD: str = ""
     SMTP_FROM: str = "noreply@setulink.io"
@@ -39,6 +39,12 @@ class Settings(BaseSettings):
 
     # Gateway Phase 6 fallback
     GATEWAY_PUBKEY: str = "q1z1P+nKkx2gW7dD2d2e1A0O1H/I6+tT6eM1yA9o/zM="
+
+    # ZeroTier Architecture Configuration
+    ZT_API_TOKEN: str = ""
+    GATEWAY_ZT_NODE_ID: str = ""
+    GLOBAL_ZT_NETWORK_ID: str = ""
+    MOCK_ZT_API: bool = False
 
     model_config = {
         "env_file": _ENV_FILE,

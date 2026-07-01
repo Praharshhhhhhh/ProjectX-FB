@@ -39,3 +39,6 @@ class VerifyOtpRequest(BaseModel):
 
 class ResendOtpRequest(BaseModel):
     email: EmailStr
+
+class UpdateProfileRequest(BaseModel):
+    full_name: str

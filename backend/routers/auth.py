@@ -6,7 +6,7 @@ from database import get_db
 from models import User, UserRole, ActivationKey, Tenant
 from schemas.auth import (
     LoginRequest, Token, ActivateKeyRequest, ChangePasswordRequest,
-    VerifyOtpRequest, ResendOtpRequest,
+    VerifyOtpRequest, ResendOtpRequest, UpdateProfileRequest
 )
 from services import auth_service
 from services import email_service
@@ -243,3 +243,9 @@ def get_me(current_user: User = Depends(get_current_user), db: Session = Depends
         "company_name": tenant.company_name if tenant else None,
         "must_change_password": current_user.must_change_password,
     }
+
+@router.patch("/me")
+def update_me(req: UpdateProfileRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    current_user.full_name = req.full_name
+    db.commit()
+    return {"message": "Profile updated successfully"}

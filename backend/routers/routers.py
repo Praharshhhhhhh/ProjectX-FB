@@ -192,6 +192,9 @@ def _router_dict(r: Router) -> dict:
         "serial_number": r.serial_number,
         "mac_address": r.mac_address,
         "zerotier_node_id": r.zerotier_node_id,
+        "wg_pubkey": None,
+        "wg_ip": None,
+        "last_seen": r.last_seen.isoformat() if r.last_seen else None,
         "name": r.name,
         "status": r.status,
         "tenant_id": r.tenant_id,
@@ -199,6 +202,68 @@ def _router_dict(r: Router) -> dict:
         "prepared_at": r.prepared_at.isoformat() if r.prepared_at else None,
         "claimed_at": r.claimed_at.isoformat() if r.claimed_at else None,
     }
+
+
+# ── Edge Router Agent Endpoints ───────────────────────────────────────────────
+
+class RouterProvisionRequest(BaseModel):
+    serial_number: str
+    activation_key: str
+    zerotier_node_id: str
+
+class RouterHeartbeatRequest(BaseModel):
+    serial_number: str
+
+@router.post("/provision")
+def provision_router(req: RouterProvisionRequest, db: Annotated[Session, Depends(get_db)]):
+    db_router = db.query(Router).filter(Router.serial_number == req.serial_number).first()
+    if not db_router:
+        raise HTTPException(status_code=404, detail="Router not found")
+        
+    ak = db.query(ActivationKey).filter(ActivationKey.router_id == db_router.id).first()
+    if not ak:
+        raise HTTPException(status_code=403, detail="Router not prepared properly")
+        
+    if db_router.status != RouterStatus.claimed or not ak.is_used:
+        raise HTTPException(status_code=403, detail="Router must be claimed in the dashboard before provisioning")
+        
+    key_val = ak.key_code
+    if settings.FIELD_ENCRYPTION_KEY:
+        try:
+            from cryptography.fernet import Fernet
+            f = Fernet(settings.FIELD_ENCRYPTION_KEY.encode())
+            key_val = f.decrypt(ak.key_code.encode()).decode()
+        except Exception:
+            pass
+            
+    if req.activation_key != key_val:
+        raise HTTPException(status_code=403, detail="Invalid activation key")
+        
+    db_router.zerotier_node_id = req.zerotier_node_id
+    db_router.last_seen = datetime.utcnow()
+    db.commit()
+    
+    # We must wait for the background Gateway Provisioning Service to provision the SubnetRegistry
+    # Once it has successfully joined ZT and stored router_zt_ip, we can return ok.
+    registry = db.query(SubnetRegistry).filter(SubnetRegistry.router_id == db_router.id).first()
+    
+    if not registry or registry.claimed_state != "active":
+        # The agent should retry if it sees status pending
+        return {"status": "pending", "message": "Provisioning in progress, please retry."}
+        
+    return {
+        "status": "ok",
+        "zt_network_id": settings.GLOBAL_ZT_NETWORK_ID
+    }
+
+@router.post("/heartbeat")
+def heartbeat_router(req: RouterHeartbeatRequest, db: Annotated[Session, Depends(get_db)]):
+    db_router = db.query(Router).filter(Router.serial_number == req.serial_number).first()
+    if not db_router:
+        raise HTTPException(status_code=404, detail="Router not found")
+    db_router.last_seen = datetime.utcnow()
+    db.commit()
+    return {"status": "ok"}
 
 
 # ── Endpoints ──────────────────────────────────────────────────────────────────

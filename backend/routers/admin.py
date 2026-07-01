@@ -89,6 +89,7 @@ def stats(db: Annotated[Session, Depends(get_db)], _=Depends(require_system_owne
         "total_tenants": db.query(Tenant).count(),
         "active_tenants": db.query(Tenant).filter(Tenant.status == TenantStatus.active).count(),
         "pending_keys": db.query(ActivationKey).filter(ActivationKey.is_used == False).count(),
+        "total_routers": db.query(Router).count(),
     }
 
 

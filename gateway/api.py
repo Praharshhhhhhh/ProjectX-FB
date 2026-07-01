@@ -15,7 +15,8 @@ routing = RoutingManager()
 
 class ProvisionRequest(BaseModel):
     registry_id: int
-    router_zt_id: str
+    router_zt_ip: str
+    zt_network_id: str
     table_id: int
     lan_subnet: str
     allowed_peer_ips: List[str] = []
@@ -24,11 +25,13 @@ class ProvisionRequest(BaseModel):
 def provision(req: ProvisionRequest):
     try:
         logger.info(f"Provisioning request for registry {req.registry_id}")
-        # Join ZeroTier
-        zt_interface = zt.join_network(req.router_zt_id)
+        
+        # Join ZeroTier network (or just get the interface if already joined)
+        zt_interface = zt.join_network(req.zt_network_id)
+        
         # Apply routing for all allowed WG peers
         for peer_ip in req.allowed_peer_ips:
-            routing.add_policy_route(peer_ip, req.lan_subnet, req.table_id, zt_interface)
+            routing.add_policy_route(peer_ip, req.lan_subnet, req.table_id, zt_interface, req.router_zt_ip)
             
         return {"status": "ok", "registry_id": req.registry_id, "zt_interface": zt_interface}
     except Exception as e:

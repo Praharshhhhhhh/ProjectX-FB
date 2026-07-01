@@ -19,6 +19,7 @@ class Router(Base):
     serial_number = Column(String, unique=True, nullable=False)
     mac_address = Column(String, unique=True, nullable=False)
     zerotier_node_id = Column(String, nullable=True)
+    last_seen = Column(DateTime, nullable=True)
     status = Column(Enum(RouterStatus), default=RouterStatus.prepared)
     name = Column(String, default="New Router")
     tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=True)

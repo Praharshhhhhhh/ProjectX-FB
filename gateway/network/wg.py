@@ -17,6 +17,8 @@ class WireGuardManager:
                 subprocess.run(["ip", "address", "add", "10.200.0.1/24", "dev", "wg-setulink"], check=True)
             # Ensure it is up
             subprocess.run(["ip", "link", "set", "up", "dev", "wg-setulink"], check=True)
+        except FileNotFoundError:
+            logger.warning("ip/wg commands not found. Assuming Windows mock environment.")
         except Exception as e:
             logger.error(f"Failed to ensure wg-setulink interface: {e}")
 
@@ -36,6 +38,9 @@ class WireGuardManager:
                     allowed_ips = parts[3].split(",")
                     peers[pubkey] = allowed_ips
             return peers
+        except FileNotFoundError:
+            logger.warning("wg not found. Mocking list_peers")
+            return {}
         except Exception as e:
             logger.error(f"Failed to list wg peers: {e}")
             return {}
@@ -48,6 +53,8 @@ class WireGuardManager:
                 ["wg", "set", "wg-setulink", "peer", public_key, "allowed-ips", allowed_ips],
                 check=True
             )
+        except FileNotFoundError:
+            logger.warning(f"wg not found. Mocking ensure_peer for {public_key}")
         except Exception as e:
             logger.error(f"Failed to ensure peer {public_key}: {e}")
             raise
@@ -57,6 +64,8 @@ class WireGuardManager:
         logger.info(f"Removing WG peer {public_key}")
         try:
             subprocess.run(["wg", "set", "wg-setulink", "peer", public_key, "remove"], check=True)
+        except FileNotFoundError:
+            logger.warning(f"wg not found. Mocking remove_peer for {public_key}")
         except Exception as e:
             logger.error(f"Failed to remove peer {public_key}: {e}")
             raise
@@ -79,3 +88,41 @@ class WireGuardManager:
             # wg show dump outputs "10.200.0.2/32" usually
             if not current_ips or allowed_ips not in current_ips:
                 self.ensure_peer(pubkey, allowed_ips)
+
+    def spawn_router_interface(self, registry_id: int, router_pubkey: str, listen_port: int):
+        ifname = f"wg-r{registry_id}"
+        logger.info(f"Spawning dedicated WG interface {ifname} on port {listen_port}")
+        try:
+            # Check if it exists
+            res = subprocess.run(["ip", "link", "show", ifname], capture_output=True)
+            if res.returncode != 0:
+                subprocess.run(["ip", "link", "add", "dev", ifname, "type", "wireguard"], check=True)
+                
+            # Attempt to configure wg
+            try:
+                subprocess.run(["wg", "set", ifname, "listen-port", str(listen_port)], check=True)
+                privkey_path = "/etc/wireguard/privatekey"
+                if __import__('os').path.exists(privkey_path):
+                    subprocess.run(["wg", "set", ifname, "private-key", privkey_path], check=True)
+            except Exception as e:
+                logger.warning(f"Could not configure wg keys/ports (expected on Windows): {e}")
+
+            subprocess.run(["ip", "link", "set", "up", "dev", ifname], check=True)
+            
+            try:
+                subprocess.run(["wg", "set", ifname, "peer", router_pubkey, "allowed-ips", "0.0.0.0/0"], check=True)
+            except Exception as e:
+                logger.warning(f"Could not set wg peer (expected on Windows): {e}")
+                
+            return ifname
+        except Exception as e:
+            logger.error(f"Failed to spawn {ifname}: {e}")
+            raise
+
+    def remove_router_interface(self, registry_id: int):
+        ifname = f"wg-r{registry_id}"
+        logger.info(f"Removing WG interface {ifname}")
+        try:
+            subprocess.run(["ip", "link", "del", "dev", ifname], check=True)
+        except Exception as e:
+            logger.error(f"Failed to remove {ifname}: {e}")

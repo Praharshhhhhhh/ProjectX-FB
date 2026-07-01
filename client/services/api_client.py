@@ -64,6 +64,9 @@ class APIClient:
         self.token = data.get("access_token")
         return data
 
+    def update_profile(self, full_name: str) -> dict:
+        return self._req("PATCH", "/api/auth/me", json={"full_name": full_name})
+
     def resend_otp(self, email: str) -> dict:
         return self._req("POST", "/api/auth/resend-otp", json={"email": email})
 
