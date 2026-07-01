@@ -15,6 +15,25 @@ else:
     
 WG_EXE = os.path.join(BIN_DIR, "wg.exe")
 WIREGUARD_EXE = os.path.join(BIN_DIR, "wireguard.exe")
+WINTUN_DLL = os.path.join(BIN_DIR, "wintun.dll")
+
+def _ensure_wintun():
+    if not os.path.exists(WINTUN_DLL):
+        logger.info("wintun.dll missing! Downloading from official repository for standalone mode...")
+        import urllib.request
+        import zipfile
+        import io
+        try:
+            url = "https://www.wintun.net/builds/wintun-0.14.1.zip"
+            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            with urllib.request.urlopen(req) as resp:
+                with zipfile.ZipFile(io.BytesIO(resp.read())) as z:
+                    # Extract amd64 wintun.dll
+                    with z.open('wintun/bin/amd64/wintun.dll') as zf, open(WINTUN_DLL, 'wb') as f:
+                        f.write(zf.read())
+            logger.info("Successfully downloaded wintun.dll")
+        except Exception as e:
+            logger.error(f"Failed to download wintun.dll: {e}")
 
 class WireGuardLocal:
     """
@@ -22,8 +41,8 @@ class WireGuardLocal:
     """
     def __init__(self):
         self.interface = "wg-setulink"
-        # Ensure AppData directory exists
-        self.config_dir = os.path.join(os.environ.get("APPDATA", "C:\\"), "SetuLink", "wg")
+        # Use a secure directory to satisfy wireguard.exe DACL checks
+        self.config_dir = "C:\\Windows\\Temp"
         os.makedirs(self.config_dir, exist_ok=True)
         self.config_path = os.path.join(self.config_dir, f"{self.interface}.conf")
         self._last_start_params = None
@@ -100,6 +119,7 @@ class WireGuardLocal:
         Writes configuration temporarily, installs/starts service if not present,
         and uses wg.exe to configure/sync peers.
         """
+        _ensure_wintun()
         self._last_start_params = (wg_ip, endpoint, gateway_pubkey, allowed_ips)
         _, private_key = self.generate_or_load_keys()
         
@@ -144,11 +164,11 @@ PersistentKeepalive = 25
             raise
         finally:
             # Delete config immediately after load to protect private key
-            if os.path.exists(self.config_path):
-                try:
-                    os.remove(self.config_path)
-                except Exception:
-                    pass
+            # if os.path.exists(self.config_path):
+            #     try:
+            #         os.remove(self.config_path)
+            #     except Exception:
+            #         pass
 
     def stop_tunnel(self):
         """

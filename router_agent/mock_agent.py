@@ -4,6 +4,31 @@ import time
 import json
 import urllib.request
 import urllib.error
+import subprocess
+
+def _get_zt_cmd():
+    if os.name == "nt":
+        return ["C:\\ProgramData\\ZeroTier\\One\\zerotier-one_x64.exe", "-q"]
+    return ["zerotier-cli"]
+
+def get_zt_node_id():
+    try:
+        cmd = _get_zt_cmd() + ["info"]
+        res = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        parts = res.stdout.strip().split()
+        if len(parts) >= 3 and parts[1] == "info":
+            return parts[2]
+    except Exception as e:
+        print(f"Warning: Failed to get real ZeroTier Node ID ({e}). Using mock.")
+    return "18881e4fa3"
+
+def join_zt_network(network_id):
+    try:
+        print(f"Joining ZeroTier network {network_id}...")
+        cmd = _get_zt_cmd() + ["join", network_id]
+        subprocess.run(cmd, check=True)
+    except Exception as e:
+        print(f"Warning: Failed to join ZeroTier network ({e}).")
 
 CONFIG_PATH = "config.json"
 API_BASE = "http://api.setulink.io/api"
@@ -27,8 +52,8 @@ def run():
         print("Missing serial_number in config.")
         sys.exit(1)
 
-    zt_node_id = "18881e4fa3"  # Mock ZT node ID for testing
-    print(f"Mock ZeroTier Node ID: {zt_node_id}")
+    zt_node_id = get_zt_node_id()
+    print(f"Using ZeroTier Node ID: {zt_node_id}")
 
     payload = {
         "serial_number": serial_number,
@@ -56,7 +81,8 @@ def run():
                 if data.get("status") == "ok":
                     print("\n✅ Provisioning successful!")
                     print(f"   ZeroTier Network ID: {data.get('zt_network_id')}")
-                    print("\n[Mock] Skipping Linux ZeroTier interface creation.")
+                    print("\n[ZeroTier] Attempting to join network...")
+                    join_zt_network(data.get('zt_network_id'))
                     
                     print("\n[Mock] Starting heartbeat loop (CTRL+C to stop)...")
                     while True:

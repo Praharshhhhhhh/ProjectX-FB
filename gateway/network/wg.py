@@ -17,6 +17,12 @@ class WireGuardManager:
                 subprocess.run(["ip", "address", "add", "10.200.0.1/24", "dev", "wg-setulink"], check=True)
             # Ensure it is up
             subprocess.run(["ip", "link", "set", "up", "dev", "wg-setulink"], check=True)
+            
+            # Set the static private key and listen port for the real Linux data plane test
+            privkey = "+EcM5BsqYoVdNAJSuWhfjEjRWKDFUwPYnoII6rX0+ns="
+            with open("/tmp/wg_priv", "w") as f:
+                f.write(privkey)
+            subprocess.run(["wg", "set", "wg-setulink", "listen-port", "51820", "private-key", "/tmp/wg_priv"], check=True)
         except FileNotFoundError:
             logger.warning("ip/wg commands not found. Assuming Windows mock environment.")
         except Exception as e:

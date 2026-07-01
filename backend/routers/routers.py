@@ -104,11 +104,11 @@ def register_desktop(
 
     # 4. Fetch allowed IPs (all claimed subnets in the tenant)
     subnets = db.query(SubnetRegistry).filter(SubnetRegistry.tenant_id == current_user.tenant_id).all()
-    allowed_ips = [s.lan_subnet for s in subnets]
+    allowed_ips = ["10.200.0.0/24"] + [s.lan_subnet for s in subnets]
     
     return {
         "wg_ip": peer.wg_ip,
-        "endpoint": f"{settings.APP_NAME.lower()}.example.com:51820", # placeholder endpoint
+        "endpoint": "10.147.19.110:51820", # Reach WSL Gateway via ZeroTier IP
         "allowed_ips": allowed_ips
     }
 
@@ -172,11 +172,11 @@ def get_desktop_config(
         raise HTTPException(status_code=404, detail="Desktop peer not registered")
         
     subnets = db.query(SubnetRegistry).filter(SubnetRegistry.tenant_id == current_user.tenant_id).all()
-    allowed_ips = [s.lan_subnet for s in subnets]
+    allowed_ips = ["10.200.0.0/24"] + [s.lan_subnet for s in subnets]
     
     return {
         "wg_ip": peer.wg_ip,
-        "endpoint": f"192.168.29.222:51820", # Gateway PC IP
+        "endpoint": f"10.147.19.110:51820", # Gateway ZeroTier IP
         "gateway_pubkey": settings.GATEWAY_PUBKEY,
         "allowed_ips": allowed_ips,
         "public_key": peer.public_key,

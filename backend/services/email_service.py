@@ -38,7 +38,12 @@ def send_email(to: str, subject: str, body: str) -> None:
                 server.sendmail(settings.SMTP_FROM, to, msg.as_string())
     except Exception as e:
         logger.error(f"Failed to send email to {to}: {e}")
-        raise
+        print("\n=== EMAIL MOCK START ===")
+        print(f"To: {to}")
+        print(f"Subject: {subject}")
+        print(f"Body:\n{body}")
+        print("=== EMAIL MOCK END ===\n")
+        # Do not raise the exception so the flow can continue locally
 
 
 def send_otp_email(to: str, code: str) -> None:

@@ -512,8 +512,29 @@ class DevicesPage(QWidget):
             key = dlg.key_input.text().strip()
             if not serial or not key:
                 return
+            
+            def on_success():
+                self.refresh()
+                self._alert.show_success("Router claimed successfully")
+                # Auto-inject into router_agent/config.json for local testing QoL
+                try:
+                    import os, json
+                    # main_window.py -> windows -> client -> root
+                    root_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+                    config_path = os.path.join(root_dir, "router_agent", "config.json")
+                    if os.path.exists(config_path):
+                        with open(config_path, "r") as f:
+                            data = json.load(f)
+                        data["serial_number"] = serial
+                        data["activation_key"] = key
+                        with open(config_path, "w") as f:
+                            json.dump(data, f, indent=4)
+                        print(f"Successfully auto-injected {serial} into router_agent/config.json!")
+                except Exception as e:
+                    print(f"Failed to auto-inject config: {e}")
+
             self._cw = Worker(self.api.claim_router, serial, key)
-            self._cw.result.connect(lambda _: (self.refresh(), self._alert.show_success("Router claimed successfully")))
+            self._cw.result.connect(lambda _: on_success())
             self._cw.error.connect(self._alert.show_error)
             self._cw.start()
 
