@@ -176,7 +176,7 @@ def get_desktop_config(
     
     return {
         "wg_ip": peer.wg_ip,
-        "endpoint": f"{settings.APP_NAME.lower()}.example.com:51820", # placeholder endpoint
+        "endpoint": f"192.168.29.222:51820", # Gateway PC IP
         "gateway_pubkey": settings.GATEWAY_PUBKEY,
         "allowed_ips": allowed_ips,
         "public_key": peer.public_key,
