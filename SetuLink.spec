@@ -4,7 +4,7 @@
 a = Analysis(
     ['C:\\Users\\Harsh Patel\\Desktop\\WG_PROJECTX\\client\\main.py'],
     pathex=[],
-    binaries=[('C:\\Users\\Harsh Patel\\Desktop\\WG_PROJECTX\\client\\.bin\\wg.exe', '.bin'), ('C:\\Users\\Harsh Patel\\Desktop\\WG_PROJECTX\\client\\.bin\\wireguard.exe', '.bin')],
+    binaries=[('C:\\Users\\Harsh Patel\\Desktop\\WG_PROJECTX\\client\\.bin\\wg.exe', '.bin'), ('C:\\Users\\Harsh Patel\\Desktop\\WG_PROJECTX\\client\\.bin\\wireguard.exe', '.bin'), ('C:\\Users\\Harsh Patel\\Desktop\\WG_PROJECTX\\client\\.bin\\wintun.dll', '.bin')],
     datas=[('C:\\Users\\Harsh Patel\\Desktop\\WG_PROJECTX\\client\\assets', 'assets')],
     hiddenimports=[],
     hookspath=[],
@@ -35,4 +35,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    uac_admin=True,
 )
