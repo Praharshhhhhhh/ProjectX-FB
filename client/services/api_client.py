@@ -137,7 +137,7 @@ class APIClient:
             "key_code": key_code, "email": email,
             "full_name": full_name, "password": password,
         })
-        self.token = data["access_token"]
+        self.token = data.get("access_token", "")
         return data
 
     def change_password(self, new_password: str) -> dict:

@@ -155,13 +155,9 @@ class App:
         self.root.set_view(self._otp)
 
     def _on_activation_success(self, token_data: dict):
-        self._token_data = token_data
-        # Once activated, key returns token directly, go fetch user info and show main
-        self._user_info = api.get_me()
-        self._show_main()
-        
-        if self._user_info.get("role") != "system_owner":
-            tunnel_manager.start(self._get_device_name())
+        from PyQt6.QtWidgets import QMessageBox
+        QMessageBox.information(None, "Activation Successful", "Your account has been activated successfully! Please log in to complete OTP verification.")
+        self._show_login()
 
     # ── Main portal ───────────────────────────────────────────────
     def _show_main(self):

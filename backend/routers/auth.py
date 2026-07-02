@@ -172,14 +172,8 @@ def activate_master_key(req: ActivateKeyRequest, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(user)
 
-    # 4. Issue JWT — router must be separately claimed via POST /api/routers/claim
-    token = auth_service.create_access_token({
-        "user_id": user.id,
-        "uuid": user.uuid,
-        "role": user.role,
-        "tenant_id": user.tenant_id,
-    })
-    return Token(access_token=token, role=user.role)
+    # 4. Do NOT issue JWT here. Force the user to log in so OTP is triggered.
+    return {"message": "Activation successful. Please log in to complete verification."}
 
 
 @router.post("/change-password")
@@ -220,14 +214,8 @@ def activate_master(req: ActivateKeyRequest, db: Session = Depends(get_db)):
     tenant.master_activation_key = None
     db.commit()
     
-    token = auth_service.create_access_token({
-        "user_id": master_user.id,
-        "uuid": master_user.uuid,
-        "role": master_user.role,
-        "tenant_id": master_user.tenant_id,
-    })
-    
-    return Token(access_token=token, role=master_user.role)
+    # Do NOT issue JWT here. Force the user to log in so OTP is triggered.
+    return {"message": "Activation successful. Please log in to complete verification."}
 
 
 @router.get("/me")

@@ -1,0 +1,6 @@
+# Gateway dependencies
+fastapi
+uvicorn[standard]
+pydantic
+requests
+pyroute2

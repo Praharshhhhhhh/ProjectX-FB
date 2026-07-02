@@ -1,0 +1,55 @@
+version: "3.8"
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    container_name: setulink_caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      - DOMAIN=${DOMAIN:-localhost}
+    command: caddy reverse-proxy --from https://${DOMAIN:-localhost} --to http://backend:8080
+    volumes:
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - backend
+
+  backend:
+    build: 
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: setulink_backend
+    restart: always
+    env_file: .env.production
+    expose:
+      - "8080"
+    depends_on:
+      - gateway
+
+  gateway:
+    build:
+      context: ./gateway
+      dockerfile: Dockerfile
+    container_name: setulink_gateway
+    restart: always
+    env_file: .env.production
+    cap_add:
+      - NET_ADMIN
+      - SYS_ADMIN
+      - SYS_MODULE
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    sysctls:
+      - net.ipv4.ip_forward=1
+    ports:
+      - "51820:51820/udp" # WireGuard public port
+      - "9993:9993/udp"   # ZeroTier default port (optional, helps with NAT)
+    expose:
+      - "8001"
+
+volumes:
+  caddy_data:
+  caddy_config:
