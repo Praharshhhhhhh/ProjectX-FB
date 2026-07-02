@@ -76,7 +76,7 @@ class DashboardPage(QWidget):
         lay.addLayout(hdr_row)
 
         stats_row = QHBoxLayout(); stats_row.setSpacing(16)
-        self._s_online  = StatCard("Claimed Routers",    "—", color="#16a34a", icon_path=asset_path(ICON_MONITOR))
+        self._s_online  = StatCard("Online Routers",    "—", color="#16a34a", icon_path=asset_path(ICON_MONITOR))
         self._s_pending = StatCard("Pending Sync",  "—", color="#ea580c", icon_path=asset_path("clock.svg"))
         self._s_users   = StatCard("Total Users",       "—", color="#2563eb", icon_path=asset_path(ICON_USERS))
         self._s_offline = StatCard("Pending Sync",   "—", color="#dc2626", icon_path=asset_path("wifi-off.svg"))
@@ -153,16 +153,15 @@ class DashboardPage(QWidget):
 
     def _on_data(self, data):
         routers, pending, users, desktops = data
-        active = [r for r in routers if r.get("status") == "claimed"]
-        offline = [r for r in routers if r.get("status") == "pending_validation"]
-        self._s_online.set_value(len(active))
-        self._s_pending.set_value(len(offline))
+        online = [r for r in routers if r.get("is_online")]
+        offline = [r for r in routers if not r.get("is_online")]
+        self._s_online.set_value(len(online))
         self._s_users.set_value(len(users))
         self._s_offline.set_value(len(offline))
 
         self._fill_list(self._dev_vlay, [
             {"main": r.get("name", ""), "sub": f"Serial: {r.get('serial_number','—')} · MAC: {r.get('mac_address','—')}",
-             "dot": "active" if r.get("status") == "claimed" else "connecting"} for r in routers[:5]
+             "dot": "active" if r.get("is_online") else ("offline" if r.get("status") == "claimed" else "connecting")} for r in routers[:5]
         ], dot=True)
 
         if users:
@@ -339,7 +338,7 @@ class DevicesPage(QWidget):
         lay.addLayout(hdr_row)
 
         stats_row = QHBoxLayout(); stats_row.setSpacing(16)
-        self._s_online  = StatCard("Claimed",     "—", color="#16a34a", icon_path=asset_path(ICON_MONITOR))
+        self._s_online  = StatCard("Online",     "—", color="#16a34a", icon_path=asset_path(ICON_MONITOR))
         self._s_conn    = StatCard("Pending Sync", "—", color="#d97706", icon_path=asset_path("clock.svg"))
         self._s_offline = StatCard("Offline Queue",    "—", color="#dc2626", icon_path=asset_path("wifi-off.svg"))
         
@@ -355,16 +354,19 @@ class DevicesPage(QWidget):
         is_admin = self.api._user.get("role") == "admin" if hasattr(self.api, "_user") and self.api._user else False
 
         if is_admin:
-            headers = ["Router ID", "Name", "Status"]
+            headers = ["Router ID", "Name", "LAN IP", "ZT IP", "WG IP", "Status"]
             self._tbl = make_table(headers)
             self._tbl.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
             self._tbl.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
             hh = self._tbl.horizontalHeader()
-            for col in range(3):
+            for col in range(6):
                 hh.setSectionResizeMode(col, QHeaderView.ResizeMode.Interactive)
             hh.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-            self._tbl.setColumnWidth(0, 200)
-            self._tbl.setColumnWidth(2, 200)
+            self._tbl.setColumnWidth(0, 100)
+            self._tbl.setColumnWidth(2, 120)
+            self._tbl.setColumnWidth(3, 120)
+            self._tbl.setColumnWidth(4, 120)
+            self._tbl.setColumnWidth(5, 120)
         else:
             headers = ["Router ID", "Name", "Serial Number", "MAC Address", "ZeroTier ID", "Status", "Actions"]
             self._tbl = make_table(headers)
@@ -427,10 +429,10 @@ class DevicesPage(QWidget):
                 existing_sns.add(sn)
         
         self._routers = routers
-        claimed = [r for r in routers if r.get("status") == "claimed"]
+        online = [r for r in routers if r.get("is_online")]
         pending = [r for r in routers if r.get("status") == "pending_validation"]
         
-        self._s_online.set_value(len(claimed))
+        self._s_online.set_value(len(online))
         self._s_conn.set_value(len(pending))
         self._s_offline.set_value(len(actions))
 
@@ -446,17 +448,25 @@ class DevicesPage(QWidget):
             if is_admin:
                 t.setItem(row_idx, 0, table_item(r.get("router_id", "—")))
                 t.setItem(row_idx, 1, table_item(r.get("name", "—")))
+                t.setItem(row_idx, 2, table_item(r.get("lan_ip", "—")))
+                t.setItem(row_idx, 3, table_item(r.get("zt_ip", "—")))
+                t.setItem(row_idx, 4, table_item(r.get("wg_ip", "—")))
                 
                 status = r.get("status", "pending_validation")
-                bg, fg = ("#dcfce7", "#166534") if status == "claimed" else ("#fef3c7", "#92400e")
-                badge = Badge(status.replace("_", " ").title(), bg, fg)
+                if r.get("is_online"):
+                    status_text = "Online"
+                    bg, fg = ("#dcfce7", "#166534")
+                else:
+                    status_text = status.replace("_", " ").title()
+                    bg, fg = ("#fef3c7", "#92400e") if status == "claimed" else ("#f1f5f9", "#64748b")
+                badge = Badge(status_text, bg, fg)
                 status_w = QWidget()
                 sl = QHBoxLayout(status_w)
                 sl.setContentsMargins(6, 6, 6, 6)
                 sl.addStretch()
                 sl.addWidget(badge)
                 sl.addStretch()
-                t.setCellWidget(row_idx, 2, status_w)
+                t.setCellWidget(row_idx, 5, status_w)
             else:
                 t.setItem(row_idx, 0, table_item(r.get("router_id", "—")))
                 t.setItem(row_idx, 1, table_item(r.get("name", "—")))
@@ -466,8 +476,13 @@ class DevicesPage(QWidget):
                 
                 # Status badge
                 status = r.get("status", "pending_validation")
-                bg, fg = ("#dcfce7", "#166534") if status == "claimed" else ("#fef3c7", "#92400e")
-                badge = Badge(status.replace("_", " ").title(), bg, fg)
+                if r.get("is_online"):
+                    status_text = "Online"
+                    bg, fg = ("#dcfce7", "#166534")
+                else:
+                    status_text = status.replace("_", " ").title()
+                    bg, fg = ("#fef3c7", "#92400e") if status == "claimed" else ("#f1f5f9", "#64748b")
+                badge = Badge(status_text, bg, fg)
                 status_w = QWidget()
                 sl = QHBoxLayout(status_w)
                 sl.setContentsMargins(6, 6, 6, 6)
@@ -1905,7 +1920,7 @@ class MainWindow(QMainWindow):
             wireguard_local.start_tunnel(
                 wg_ip=config["wg_ip"],
                 endpoint=config["endpoint"],
-                gateway_pubkey="gw_pubkey_placeholder",
+                gateway_pubkey=config.get("gateway_pubkey", ""),
                 allowed_ips=config["allowed_ips"]
             )
             self._hb_timer = QTimer(self)
@@ -1990,7 +2005,7 @@ class MainWindow(QMainWindow):
     def _update_tunnel_status(self):
         if not hasattr(self, 'tunnel_status_lbl'):
             return
-        tun_name = "WireGuard" if TUNNEL_MODE == "wireguard" else "ZeroTier"
+        tun_name = "WireGuard"
         is_running = is_tunnel_running()
         self.tunnel_status_lbl.setText(f"● {tun_name} Active" if is_running else f"○ {tun_name} Inactive")
         color = "#4ade80" if is_running else "#f87171"
@@ -2073,6 +2088,12 @@ class MainWindow(QMainWindow):
             self._nav_btns[key] = btn
 
         sb.addStretch()
+        
+        self.tunnel_status_lbl = QLabel("○ Tunnel Status")
+        self.tunnel_status_lbl.setStyleSheet("color:#64748b;font-size:12px;padding:8px 18px")
+        sb.addWidget(self.tunnel_status_lbl)
+        
+        self._update_tunnel_status()
 
         logout_btn = QPushButton("  Logout")
         logout_btn.setObjectName("nav-logout")

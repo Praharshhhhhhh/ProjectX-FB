@@ -51,13 +51,20 @@ def register_desktop(
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[Session, Depends(get_db)],
 ):
-    # 1. Idempotency Check: if peer already exists by device_name, reuse it and update pubkey
-    peer = db.query(DesktopPeer).filter(
-        DesktopPeer.user_id == current_user.id,
-        DesktopPeer.device_name == req.device_name
-    ).first()
+    # 1. Idempotency Check: try finding by public_key first, then fallback to device_name
+    peer = db.query(DesktopPeer).filter(DesktopPeer.public_key == req.public_key).first()
+    
+    if not peer:
+        peer = db.query(DesktopPeer).filter(
+            DesktopPeer.user_id == current_user.id,
+            DesktopPeer.device_name == req.device_name
+        ).first()
+        
     if peer:
+        peer.user_id = current_user.id
+        peer.tenant_id = current_user.tenant_id
         peer.public_key = req.public_key
+        peer.device_name = req.device_name
         peer.last_seen = datetime.utcnow()
         peer.active = True
         peer.tunnel_state = "connected"
@@ -95,7 +102,7 @@ def register_desktop(
         try:
             import requests
             requests.post(
-                "http://127.0.0.1:8080/v1/peers",
+                "http://192.168.29.153:8080/v1/peers",
                 json={"public_key": req.public_key, "allowed_ips": f"{wg_ip}/32"},
                 timeout=2
             )
@@ -108,7 +115,7 @@ def register_desktop(
     
     return {
         "wg_ip": peer.wg_ip,
-        "endpoint": "192.168.29.222:51820",
+        "endpoint": "192.168.29.153:51820",
         "allowed_ips": allowed_ips
     }
 
@@ -152,7 +159,7 @@ def disconnect_desktop(
     try:
         import requests
         requests.delete(
-            f"http://127.0.0.1:8080/v1/peers/{req.public_key}",
+            f"http://192.168.29.153:8080/v1/peers/{req.public_key}",
             timeout=2
         )
     except Exception:
@@ -176,7 +183,7 @@ def get_desktop_config(
     
     return {
         "wg_ip": peer.wg_ip,
-        "endpoint": "192.168.29.222:51820",
+        "endpoint": "192.168.29.153:51820",
         "gateway_pubkey": settings.GATEWAY_PUBKEY,
         "allowed_ips": allowed_ips,
         "public_key": peer.public_key,
@@ -185,16 +192,34 @@ def get_desktop_config(
     }
 
 
-def _router_dict(r: Router) -> dict:
+def _router_dict(r: Router, db=None) -> dict:
+    from datetime import datetime
+    now = datetime.utcnow()
+    is_online = False
+    if r.last_seen:
+        is_online = (now - r.last_seen).total_seconds() < 120
+
+    zt_ip = "—"
+    lan_ip = "—"
+    if db:
+        from models.subnet_registry import SubnetRegistry
+        reg = db.query(SubnetRegistry).filter(SubnetRegistry.router_id == r.id).first()
+        if reg:
+            zt_ip = reg.router_zt_ip or "—"
+            lan_ip = reg.lan_subnet or "—"
+
     return {
         "id": r.id,
         "router_id": r.router_id,
         "serial_number": r.serial_number,
         "mac_address": r.mac_address,
         "zerotier_node_id": r.zerotier_node_id,
-        "wg_pubkey": None,
-        "wg_ip": None,
+        "wg_pubkey": "—",
+        "wg_ip": "—",
+        "zt_ip": zt_ip,
+        "lan_ip": lan_ip,
         "last_seen": r.last_seen.isoformat() if r.last_seen else None,
+        "is_online": is_online,
         "name": r.name,
         "status": r.status,
         "tenant_id": r.tenant_id,
@@ -276,7 +301,7 @@ def claim(
     bg_tasks: BackgroundTasks,
 ):
     result = claim_router(db, current_user, req.serial_number, req.activation_key, bg_tasks)
-    return {"status": "claimed", "router": _router_dict(result)}
+    return {"status": "claimed", "router": _router_dict(result, db)}
 
 
 @router.get("/")
@@ -313,10 +338,10 @@ def list_routers(
     if pending_router_ids:
         pending_routers = db.query(Router).filter(Router.id.in_(pending_router_ids)).all()
 
-    result = [_router_dict(r) for r in claimed]
+    result = [_router_dict(r, db) for r in claimed]
     for r in pending_routers:
         if r.id not in {cr.id for cr in claimed}:
-            result.append(_router_dict(r))
+            result.append(_router_dict(r, db))
     return result
 
 
@@ -343,7 +368,7 @@ def rename_router(
 
     r.name = req.name
     db.commit()
-    return {"message": "Router renamed.", "router": _router_dict(r)}
+    return {"message": "Router renamed.", "router": _router_dict(r, db)}
 
 
 @router.post("/{router_id}/share")
@@ -487,7 +512,7 @@ def sync_router(
         result = claim_router(db, current_user, pv.serial_number_submitted, key_code, bg_tasks)
         pv.status = PendingValidationStatus.completed
         db.commit()
-        return {"status": "claimed", "router": _router_dict(result)}
+        return {"status": "claimed", "router": _router_dict(result, db)}
     except HTTPException as e:
         pv.status = PendingValidationStatus.failed
         pv.fail_reason = e.detail

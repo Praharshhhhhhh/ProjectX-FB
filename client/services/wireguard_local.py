@@ -47,8 +47,11 @@ class WireGuardLocal:
     def __init__(self):
         self.interface = "wg-setulink"
         # Use a secure directory to satisfy wireguard.exe DACL checks
-        self.config_dir = "C:\\Windows\\Temp"
-        os.makedirs(self.config_dir, exist_ok=True)
+        self.config_dir = "C:\\Program Files\\SetuLink\\config"
+        try:
+            os.makedirs(self.config_dir, exist_ok=True)
+        except Exception:
+            pass # Fails if not elevated, but we should be
         self.config_path = os.path.join(self.config_dir, f"{self.interface}.conf")
         self._last_start_params = None
 
@@ -142,6 +145,12 @@ PersistentKeepalive = 25
 """
 
         try:
+            if os.path.exists(self.config_path):
+                try:
+                    os.remove(self.config_path)
+                except Exception as e:
+                    logger.warning(f"Could not remove old config file: {e}")
+            
             # 1. Write config to secure directory
             with open(self.config_path, "w") as f:
                 f.write(conf_content)

@@ -125,7 +125,7 @@ def provision_router_task(registry_id: int):
                 allowed_peer_ips = [p.wg_ip for p in desktop_peers]
                 
                 resp = requests.post(
-                    "http://127.0.0.1:8080/v1/provision",
+                    "http://192.168.29.153:8080/v1/provision",
                     json={
                         "registry_id": registry.id,
                         "router_zt_ip": router_zt_ip,
@@ -202,7 +202,7 @@ def reconcile_gateway_peers():
         
     try:
         resp = requests.post(
-            "http://127.0.0.1:8080/v1/peers/reconcile",
+            "http://192.168.29.153:8080/v1/peers/reconcile",
             json={"expected_peers": expected_peers},
             timeout=5
         )
@@ -229,7 +229,7 @@ def prune_stale_desktop_peers():
             
             # Best-effort delete from Gateway (reconciliation loop will also catch it)
             try:
-                requests.delete(f"http://127.0.0.1:8080/v1/peers/{peer.public_key}", timeout=2)
+                requests.delete(f"http://192.168.29.153:8080/v1/peers/{peer.public_key}", timeout=2)
             except Exception:
                 pass
                 
