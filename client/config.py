@@ -1,12 +1,16 @@
 import os
+import sys
 from dotenv import load_dotenv
 
-_HERE = os.path.dirname(os.path.abspath(__file__))
-_ROOT = os.path.dirname(_HERE)
+if getattr(sys, 'frozen', False):
+    # Running in a PyInstaller bundle (.exe)
+    _APP_DIR = os.path.dirname(sys.executable)
+else:
+    # Running in a normal Python environment
+    _HERE = os.path.dirname(os.path.abspath(__file__))
+    _APP_DIR = os.path.dirname(_HERE)
 
-# Single project-root .env takes priority; local client/.env is a fallback.
-load_dotenv(os.path.join(_ROOT, ".env"))
-load_dotenv(os.path.join(_HERE, ".env"), override=True)
+load_dotenv(os.path.join(_APP_DIR, ".env"))
 
 BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8001")
 APP_NAME = os.getenv("APP_NAME", "SetuLink")

@@ -108,7 +108,7 @@ def register_desktop(
     
     return {
         "wg_ip": peer.wg_ip,
-        "endpoint": "10.147.19.110:51820", # Reach WSL Gateway via ZeroTier IP
+        "endpoint": "192.168.29.222:51820",
         "allowed_ips": allowed_ips
     }
 
@@ -176,7 +176,7 @@ def get_desktop_config(
     
     return {
         "wg_ip": peer.wg_ip,
-        "endpoint": f"10.147.19.110:51820", # Gateway ZeroTier IP
+        "endpoint": "192.168.29.222:51820",
         "gateway_pubkey": settings.GATEWAY_PUBKEY,
         "allowed_ips": allowed_ips,
         "public_key": peer.public_key,

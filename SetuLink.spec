@@ -3,10 +3,10 @@
 
 a = Analysis(
     ['C:\\Users\\Harsh Patel\\Desktop\\WG_PROJECTX\\client\\main.py'],
-    pathex=[],
+    pathex=['C:\\Users\\Harsh Patel\\Desktop\\WG_PROJECTX\\client'],
     binaries=[('C:\\Users\\Harsh Patel\\Desktop\\WG_PROJECTX\\client\\.bin\\wg.exe', '.bin'), ('C:\\Users\\Harsh Patel\\Desktop\\WG_PROJECTX\\client\\.bin\\wireguard.exe', '.bin'), ('C:\\Users\\Harsh Patel\\Desktop\\WG_PROJECTX\\client\\.bin\\wintun.dll', '.bin')],
     datas=[('C:\\Users\\Harsh Patel\\Desktop\\WG_PROJECTX\\client\\assets', 'assets')],
-    hiddenimports=[],
+    hiddenimports=['services.wireguard_local', 'keyring'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

@@ -4,6 +4,11 @@ import logging
 import socket
 import keyring
 
+def _run_hidden(*args, **kwargs):
+    if os.name == 'nt':
+        kwargs['creationflags'] = getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000)
+    return subprocess.run(*args, **kwargs)
+
 logger = logging.getLogger(__name__)
 
 import sys
@@ -61,11 +66,11 @@ class WireGuardLocal:
         logger.info("Generating new WireGuard keypair...")
         try:
             # Generate private key
-            res_priv = subprocess.run([WG_EXE, "genkey"], capture_output=True, text=True, check=True)
+            res_priv = _run_hidden([WG_EXE, "genkey"], capture_output=True, text=True, check=True)
             private_key = res_priv.stdout.strip()
 
             # Generate public key from private key
-            res_pub = subprocess.run([WG_EXE, "pubkey"], input=private_key, capture_output=True, text=True, check=True)
+            res_pub = _run_hidden([WG_EXE, "pubkey"], input=private_key, capture_output=True, text=True, check=True)
             public_key = res_pub.stdout.strip()
 
             # Store in OS keyring
@@ -99,7 +104,7 @@ class WireGuardLocal:
         Returns 999999 if no handshake or command fails.
         """
         try:
-            res = subprocess.run([WG_EXE, "show", self.interface, "latest-handshakes"], capture_output=True, text=True)
+            res = _run_hidden([WG_EXE, "show", self.interface, "latest-handshakes"], capture_output=True, text=True)
             if res.returncode == 0:
                 output = res.stdout.strip()
                 if output:
@@ -146,18 +151,18 @@ PersistentKeepalive = 25
             # 2. Check if the tunnel service is already installed
             # wireguard.exe /installtunnelservice config_path
             # We check if interface exists
-            res_show = subprocess.run([WG_EXE, "show", self.interface], capture_output=True)
+            res_show = _run_hidden([WG_EXE, "show", self.interface], capture_output=True)
             if res_show.returncode != 0:
                 logger.info("Installing WireGuard tunnel service...")
                 # Note: wireguard.exe requires admin/elevated privileges to install service.
-                subprocess.run([WIREGUARD_EXE, "/uninstalltunnelservice", self.interface], capture_output=True)
-                subprocess.run([WIREGUARD_EXE, "/installtunnelservice", self.config_path], check=True)
+                _run_hidden([WIREGUARD_EXE, "/uninstalltunnelservice", self.interface], capture_output=True)
+                _run_hidden([WIREGUARD_EXE, "/installtunnelservice", self.config_path], check=True)
             else:
                 logger.info("Syncing peer configuration...")
                 # Interface exists; update config dynamically via wg.exe syncconf
                 # We need to translate config to setconf format or call syncconf if supported.
                 # wg.exe setconf expects a file.
-                subprocess.run([WG_EXE, "setconf", self.interface, self.config_path], check=True)
+                _run_hidden([WG_EXE, "setconf", self.interface, self.config_path], check=True)
 
         except Exception as e:
             logger.error(f"Failed to start/sync tunnel: {e}")
@@ -169,6 +174,7 @@ PersistentKeepalive = 25
             #         os.remove(self.config_path)
             #     except Exception:
             #         pass
+            pass
 
     def stop_tunnel(self):
         """
@@ -177,7 +183,7 @@ PersistentKeepalive = 25
         self._last_start_params = None
         logger.info("Uninstalling WireGuard tunnel service...")
         try:
-            subprocess.run([WIREGUARD_EXE, "/uninstalltunnelservice", self.interface], check=True)
+            _run_hidden([WIREGUARD_EXE, "/uninstalltunnelservice", self.interface], check=True)
         except Exception as e:
             logger.error(f"Failed to uninstall tunnel: {e}")
 
