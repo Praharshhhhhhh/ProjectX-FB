@@ -102,7 +102,7 @@ def register_desktop(
         try:
             import requests
             requests.post(
-                "http://192.168.29.153:8080/v1/peers",
+                "http://192.168.196.170:8080/v1/peers",
                 json={"public_key": req.public_key, "allowed_ips": f"{wg_ip}/32"},
                 timeout=2
             )
@@ -115,7 +115,7 @@ def register_desktop(
     
     return {
         "wg_ip": peer.wg_ip,
-        "endpoint": "192.168.29.153:51820",
+        "endpoint": "192.168.196.170:51820",
         "allowed_ips": allowed_ips
     }
 
@@ -159,7 +159,7 @@ def disconnect_desktop(
     try:
         import requests
         requests.delete(
-            f"http://192.168.29.153:8080/v1/peers/{req.public_key}",
+            f"http://192.168.196.170:8080/v1/peers/{req.public_key}",
             timeout=2
         )
     except Exception:
@@ -183,7 +183,7 @@ def get_desktop_config(
     
     return {
         "wg_ip": peer.wg_ip,
-        "endpoint": "192.168.29.153:51820",
+        "endpoint": "192.168.196.170:51820",
         "gateway_pubkey": settings.GATEWAY_PUBKEY,
         "allowed_ips": allowed_ips,
         "public_key": peer.public_key,
