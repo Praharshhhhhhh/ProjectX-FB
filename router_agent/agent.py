@@ -23,7 +23,8 @@ def load_config():
 
 def get_zt_node_id():
     try:
-        proc = subprocess.run(["zerotier-cli", "info"], capture_output=True, text=True, check=True)
+        zt_cmd = ["zerotier-cli"] if os.name != 'nt' else [r"C:\ProgramData\ZeroTier\One\zerotier-one_x64.exe", "-q"]
+        proc = subprocess.run(zt_cmd + ["info"], capture_output=True, text=True, check=True)
         # Expected output: "200 info <node_id> <version> ONLINE"
         parts = proc.stdout.split()
         if len(parts) >= 3 and parts[1] == "info":
@@ -36,11 +37,38 @@ def get_zt_node_id():
 def join_zt_network(network_id):
     try:
         print(f"Joining ZeroTier network {network_id}...")
-        subprocess.run(["zerotier-cli", "join", network_id], check=True, capture_output=True)
-        print("Successfully joined ZeroTier network.")
+        if os.name == 'nt':
+            # On Windows, the CLI tool often fails with "401 join {}". 
+            # We bypass it by hitting the local ZeroTier service API directly.
+            token_path = r"C:\ProgramData\ZeroTier\One\authtoken.secret"
+            with open(token_path, "r") as f:
+                token = f.read().strip()
+            
+            req = urllib.request.Request(
+                f"http://localhost:9993/network/{network_id}",
+                data=json.dumps({}).encode('utf-8'),
+                headers={"X-ZT1-Auth": token, "Content-Type": "application/json"},
+                method="POST"
+            )
+            with urllib.request.urlopen(req, timeout=5) as response:
+                if response.status == 200:
+                    print("Successfully joined ZeroTier network via Local API.")
+                else:
+                    print(f"Failed to join via Local API: {response.status}")
+        else:
+            zt_cmd = ["zerotier-cli"]
+            subprocess.run(zt_cmd + ["join", network_id], check=True, capture_output=True)
+            print("Successfully joined ZeroTier network.")
     except Exception as e:
-        print(f"Failed to join ZeroTier network: {e}")
-        sys.exit(1)
+        print(f"Failed to join ZeroTier network automatically: {e}")
+        print(f"Please ensure you join the network {network_id} manually (e.g., via the ZeroTier UI).")
+
+def is_admin():
+    try:
+        import ctypes
+        return ctypes.windll.shell32.IsUserAnAdmin()
+    except:
+        return False
 
 def run():
     config = load_config()
@@ -52,10 +80,14 @@ def run():
         print("Missing serial_number in config.")
         sys.exit(1)
 
-    zt_node_id = get_zt_node_id()
-    print(f"ZeroTier Node ID: {zt_node_id}")
-
     lan_subnet = config.get("lan_subnet")
+
+    zt_node_id = config.get("zerotier_node_id")
+    if not zt_node_id:
+        zt_node_id = get_zt_node_id()
+        print(f"ZeroTier Node ID (from CLI): {zt_node_id}")
+    else:
+        print(f"ZeroTier Node ID (from config): {zt_node_id}")
 
     payload = {
         "serial_number": serial_number,
@@ -88,7 +120,10 @@ def run():
                     zt_network_id = data.get("zt_network_id")
                     
                     if zt_network_id:
-                        join_zt_network(zt_network_id)
+                        if os.name == 'nt':
+                            print(f"Skipping automatic network join on Windows. Please ensure you are connected to {zt_network_id} in the ZeroTier UI.")
+                        else:
+                            join_zt_network(zt_network_id)
                     else:
                         print("Warning: Backend did not return a ZT network ID.")
                     
