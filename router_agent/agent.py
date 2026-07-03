@@ -55,11 +55,16 @@ def run():
     zt_node_id = get_zt_node_id()
     print(f"ZeroTier Node ID: {zt_node_id}")
 
+    lan_subnet = config.get("lan_subnet")
+
     payload = {
         "serial_number": serial_number,
         "activation_key": activation_key,
         "zerotier_node_id": zt_node_id
     }
+    if lan_subnet:
+        payload["lan_subnet"] = lan_subnet
+
     
     req = urllib.request.Request(
         f"{api_url}/routers/provision",

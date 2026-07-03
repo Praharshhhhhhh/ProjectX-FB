@@ -235,12 +235,13 @@ class RouterProvisionRequest(BaseModel):
     serial_number: str
     activation_key: str
     zerotier_node_id: str
+    lan_subnet: str | None = None
 
 class RouterHeartbeatRequest(BaseModel):
     serial_number: str
 
 @router.post("/provision")
-def provision_router(req: RouterProvisionRequest, db: Annotated[Session, Depends(get_db)]):
+def provision_router(req: RouterProvisionRequest, db: Annotated[Session, Depends(get_db)], bg_tasks: BackgroundTasks):
     db_router = db.query(Router).filter(Router.serial_number == req.serial_number).first()
     if not db_router:
         raise HTTPException(status_code=404, detail="Router not found")
@@ -266,12 +267,45 @@ def provision_router(req: RouterProvisionRequest, db: Annotated[Session, Depends
         
     db_router.zerotier_node_id = req.zerotier_node_id
     db_router.last_seen = datetime.utcnow()
+    
+    registry = db.query(SubnetRegistry).filter(SubnetRegistry.router_id == db_router.id).first()
+    
+    # Handle dynamic lan_subnet update
+    if req.lan_subnet and registry:
+        import ipaddress
+        try:
+            network = ipaddress.ip_network(req.lan_subnet, strict=False)
+            if not network.is_private:
+                raise HTTPException(status_code=400, detail="LAN subnet must be a private IPv4 range.")
+            if network == ipaddress.ip_network("0.0.0.0/0"):
+                raise HTTPException(status_code=400, detail="0.0.0.0/0 is not allowed as a LAN subnet.")
+            if network.overlaps(ipaddress.ip_network("10.200.0.0/24")):
+                raise HTTPException(status_code=400, detail="LAN subnet cannot overlap with WireGuard tunnel pool 10.200.0.0/24.")
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid LAN subnet CIDR format.")
+            
+        if req.lan_subnet != registry.lan_subnet:
+            # Check for collisions with other tenants on the same gateway (globally for now)
+            collision = db.query(SubnetRegistry).filter(
+                SubnetRegistry.id != registry.id,
+                SubnetRegistry.lan_subnet == req.lan_subnet
+            ).first()
+            if collision:
+                raise HTTPException(status_code=409, detail=f"LAN subnet {req.lan_subnet} is already in use by another router.")
+                
+            registry.lan_subnet = req.lan_subnet
+            # Force gateway re-sync by rewinding state
+            from models.subnet_registry import SubnetProvisioningState
+            registry.claimed_state = SubnetProvisioningState.provisioning_zt
+            
+            # Re-queue background task to push update to gateway
+            from services.gateway_provisioning_service import provision_router_task
+            bg_tasks.add_task(provision_router_task, registry.id)
+
     db.commit()
     
     # We must wait for the background Gateway Provisioning Service to provision the SubnetRegistry
     # Once it has successfully joined ZT and stored router_zt_ip, we can return ok.
-    registry = db.query(SubnetRegistry).filter(SubnetRegistry.router_id == db_router.id).first()
-    
     if not registry or registry.claimed_state != "active":
         # The agent should retry if it sees status pending
         return {"status": "pending", "message": "Provisioning in progress, please retry."}

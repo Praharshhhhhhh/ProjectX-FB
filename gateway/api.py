@@ -29,6 +29,9 @@ def provision(req: ProvisionRequest):
         # Join ZeroTier network (or just get the interface if already joined)
         zt_interface = zt.join_network(req.zt_network_id)
         
+        # Flush the old routing table to ensure no stale rules accumulate
+        routing.flush_table(req.table_id)
+        
         # Apply routing for all allowed WG peers
         for peer_ip in req.allowed_peer_ips:
             routing.add_policy_route(peer_ip, req.lan_subnet, req.table_id, zt_interface, req.router_zt_ip)

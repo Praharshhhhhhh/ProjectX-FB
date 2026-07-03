@@ -60,3 +60,32 @@ class RoutingManager:
                     ipr.route('del', dst=lan_subnet, oif=idx, table=table_id)
                 except Exception:
                     pass
+
+    def flush_table(self, table_id: int):
+        logger.info(f"Flushing routing table {table_id} before re-provisioning")
+        
+        # 1. Loop to delete all rules matching the table
+        while True:
+            try:
+                res = subprocess.run(
+                    ["ip", "rule", "del", "table", str(table_id)], 
+                    capture_output=True, 
+                    text=True
+                )
+                if res.returncode != 0:
+                    # No more rules matching this table, or an error occurred. Break the loop.
+                    break
+            except Exception as e:
+                logger.error(f"Error while deleting rules for table {table_id}: {e}")
+                break
+                
+        # 2. Flush the actual routes inside the table
+        try:
+            subprocess.run(
+                ["ip", "route", "flush", "table", str(table_id)],
+                capture_output=True,
+                check=False
+            )
+        except Exception as e:
+            logger.error(f"Error while flushing routes for table {table_id}: {e}")
+
