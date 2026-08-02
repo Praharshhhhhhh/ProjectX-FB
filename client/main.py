@@ -3,24 +3,17 @@ import os
 
 sys.path.insert(0, os.path.dirname(__file__))
 
-from PyQt6.QtWidgets import QApplication
-# pyrefly: ignore [missing-import]
+from PyQt6.QtWidgets import QApplication, QSystemTrayIcon, QMenu
+from PyQt6.QtGui import QIcon, QAction
+from PyQt6.QtCore import pyqtSignal, Qt
 from services.api_client import api
-# pyrefly: ignore [missing-import]
+from services.tunnel_manager import tunnel_manager
 from windows.login_window import LoginWindow
-# pyrefly: ignore [missing-import]
 from windows.activate_key_window import ActivateKeyWindow
-# pyrefly: ignore [missing-import]
-from windows.setup_2fa_window import Setup2FAWindow
-# pyrefly: ignore [missing-import]
-from windows.claim_network_window import ClaimNetworkWindow
-# pyrefly: ignore [missing-import]
+from windows.verify_otp_window import VerifyOtpWindow
 from windows.main_window import MainWindow
-# pyrefly: ignore [missing-import]
 from windows.owner_window import OwnerWindow
-# pyrefly: ignore [missing-import]
 from windows.home_window import HomeWindow
-# pyrefly: ignore [missing-import]
 from config import APP_NAME
 
 
@@ -28,15 +21,96 @@ class App:
     def __init__(self):
         self.qt_app = QApplication(sys.argv)
         self.qt_app.setApplicationName(APP_NAME)
+        self.qt_app.setQuitOnLastWindowClosed(False)
         self.qt_app.setStyle("Fusion")
         self._token_data = {}
         self._user_info  = {}
         
-        # pyrefly: ignore [missing-import]
         from windows.root_window import RootWindow
         self.root = RootWindow()
+        self.root.closeEvent = self._on_root_close
+        
+        self._setup_tray()
         
         self._show_login()
+
+    def _setup_tray(self):
+        self.tray_icon = QSystemTrayIcon()
+        from widgets.common import load_icon, asset_path
+        icon = load_icon(asset_path("logo-square.svg"), 32)
+        if icon:
+            self.tray_icon.setIcon(icon)
+        else:
+            # Fallback if no icon
+            from PyQt6.QtGui import QPixmap
+            pm = QPixmap(32, 32)
+            pm.fill(Qt.GlobalColor.transparent)
+            self.tray_icon.setIcon(QIcon(pm))
+            
+        self.tray_menu = QMenu()
+        
+        self.action_status = QAction("Status: Disconnected", self.qt_app)
+        self.action_status.setEnabled(False)
+        self.tray_menu.addAction(self.action_status)
+        
+        self.tray_menu.addSeparator()
+        
+        self.action_show = QAction("Show Dashboard", self.qt_app)
+        self.action_show.triggered.connect(self.root.showNormal)
+        self.tray_menu.addAction(self.action_show)
+        
+        self.action_reconnect = QAction("Reconnect", self.qt_app)
+        self.action_reconnect.triggered.connect(lambda: tunnel_manager.start(self._get_device_name()))
+        self.tray_menu.addAction(self.action_reconnect)
+        
+        self.action_disconnect = QAction("Disconnect", self.qt_app)
+        self.action_disconnect.triggered.connect(tunnel_manager.stop)
+        self.tray_menu.addAction(self.action_disconnect)
+        
+        self.action_rotate = QAction("Rotate Keys", self.qt_app)
+        self.action_rotate.triggered.connect(self._rotate_keys)
+        self.tray_menu.addAction(self.action_rotate)
+        
+        self.tray_menu.addSeparator()
+        
+        self.action_quit = QAction("Quit", self.qt_app)
+        self.action_quit.triggered.connect(self.quit_app)
+        self.tray_menu.addAction(self.action_quit)
+        
+        self.tray_icon.setContextMenu(self.tray_menu)
+        self.tray_icon.activated.connect(self._on_tray_activated)
+        self.tray_icon.show()
+        
+        tunnel_manager.status_changed.connect(self._on_tunnel_status)
+
+    def _get_device_name(self):
+        import socket
+        return socket.gethostname()
+
+    def _on_tunnel_status(self, status: str):
+        self.action_status.setText(f"Status: {status}")
+
+    def _on_tray_activated(self, reason):
+        if reason == QSystemTrayIcon.ActivationReason.DoubleClick:
+            self.root.showNormal()
+
+    def _on_root_close(self, event):
+        # Minimize to tray
+        event.ignore()
+        self.root.hide()
+        self.tray_icon.showMessage(APP_NAME, "Application is running in the background.", QSystemTrayIcon.MessageIcon.Information, 2000)
+
+    def _rotate_keys(self):
+        from PyQt6.QtWidgets import QMessageBox
+        reply = QMessageBox.question(None, 'Rotate Keys', 
+                                     'Are you sure you want to rotate your WireGuard keys?\nThis will briefly interrupt your connection.',
+                                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
+        if reply == QMessageBox.StandardButton.Yes:
+            tunnel_manager.rotate_keys()
+
+    def quit_app(self):
+        tunnel_manager.stop()
+        self.qt_app.quit()
 
     # ── Home ──────────────────────────────────────────────────────
     def _show_home(self):
@@ -49,6 +123,7 @@ class App:
     def _show_login(self):
         self._login = LoginWindow(api)
         self._login.login_success.connect(self._on_login_success)
+        self._login.otp_required.connect(self._show_otp_verification)
         self._login.goto_activate.connect(self._show_activate)
         self.root.set_view(self._login)
 
@@ -67,323 +142,49 @@ class App:
     def _on_login_success(self, token_data: dict, me: dict):
         self._token_data = token_data
         self._user_info  = me
+        self._show_main()
         
-        role = me.get("role")
-        if role != "system_owner":
-            # pyrefly: ignore [missing-import]
-            from services.websocket_client import ws_client
-            ws_client.connect_ws(api.base, token_data.get("access_token"))
-            
-            try:
-                ws_client.mesh_updated.disconnect(self._on_mesh_updated)
-                ws_client.device_removed.disconnect(self._on_mesh_updated)
-                ws_client.device_updated.disconnect(self._on_mesh_updated)
-            except TypeError:
-                pass
-            ws_client.mesh_updated.connect(self._on_mesh_updated)
-            ws_client.device_removed.connect(self._on_mesh_updated)
-            ws_client.device_updated.connect(self._on_mesh_updated)
-            
-        if token_data.get("requires_2fa") and not me.get("totp_enabled"):
-            self._show_2fa_setup()
-        else:
-            role = me.get("role")
-            from config import TUNNEL_MODE
-            if TUNNEL_MODE == "zerotier" and role in ("master", "second_master") and not me.get("network_id"):
-                self._show_claim_network()
-            else:
-                self._show_main()
+        # Start the background tunnel manager only for tenant users
+        if me.get("role") != "system_owner":
+            tunnel_manager.start(self._get_device_name())
+
+    def _show_otp_verification(self, email: str):
+        self._otp = VerifyOtpWindow(api, email)
+        self._otp.otp_verified.connect(self._on_login_success)
+        self._otp.goto_login.connect(self._show_login)
+        self.root.set_view(self._otp)
 
     def _on_activation_success(self, token_data: dict):
-        self._token_data = token_data
-        self._show_2fa_setup()
-
-    # ── 2FA / Claim ───────────────────────────────────────────────
-    def _show_2fa_setup(self):
-        self._setup2fa = Setup2FAWindow(api)
-        self._setup2fa.setup_complete.connect(self._after_2fa)
-        self.root.set_view(self._setup2fa)
-
-    def _after_2fa(self):
-        self._user_info = api.get_me()
-        role = self._user_info.get("role")
-        from config import TUNNEL_MODE
-        if TUNNEL_MODE == "zerotier" and role in ("master", "second_master") and not self._user_info.get("network_id"):
-            self._show_claim_network()
-        else:
-            self._show_main()
-
-    def _show_claim_network(self):
-        self._claim = ClaimNetworkWindow(api)
-        self._claim.claim_success.connect(self._show_main)
-        self.root.set_view(self._claim)
-
-    def _on_mesh_updated(self, *args):
-        from config import TUNNEL_MODE
-        # If this PC is the WG server (no client device_id was set), the mesh
-        # update is handled by the server daemon itself — nothing to do here.
-        if TUNNEL_MODE == "wireguard" and getattr(self, "_device_id", None):
-            import os
-            from config import WG_CONFIG_DIR, WG_INTERFACE
-            from services import wireguard_local as tunnel
-            
-            try:
-                conf_data = api.download_conf(self._device_id)
-                if conf_data:
-                    priv, _ = tunnel.get_or_create_keypair()
-                    conf_data = conf_data.replace("REPLACE_ME", priv)
-                    
-                    config_path = os.path.join(WG_CONFIG_DIR, f"{WG_INTERFACE}.conf")
-                    with open(config_path, "w") as f:
-                        f.write(conf_data)
-                    tunnel.sync_config(config_path)
-            except Exception as e:
-                print(f"Failed to sync mesh update: {e}")
-    
+        from PyQt6.QtWidgets import QMessageBox
+        QMessageBox.information(None, "Activation Successful", "Your account has been activated successfully! Please log in to complete OTP verification.")
+        self._show_login()
 
     # ── Main portal ───────────────────────────────────────────────
     def _show_main(self):
         self._user_info = api.get_me()
-
-        network_id = self._user_info.get("network_id")
-        
-        # pyrefly: ignore [missing-import]
-        from config import TUNNEL_MODE
-        if TUNNEL_MODE == "wireguard":
-            # pyrefly: ignore [missing-import]
-            from services import wireguard_local as tunnel
-        else:
-            # pyrefly: ignore [missing-import]
-            from services import zerotier_local as tunnel
-
-        role = self._user_info.get("role")
-        has_wg_server = self._user_info.get("has_wg_server")
-
-        if network_id or TUNNEL_MODE == "wireguard":
-            import threading
-            import socket
-            import time
-
-            if TUNNEL_MODE == "wireguard":
-                # Determine the server interface name from the user's tenant info.
-                # /api/auth/me returns wg_server_interface when a WG server has been
-                # claimed for this tenant; fall back to the conventional "wg0".
-                wg_server_iface = self._user_info.get("wg_server_interface") or "wg0"
-
-                # ── Server-PC detection ──────────────────────────────────────
-                # If the WG server interface is already running on THIS machine,
-                # this PC IS the hub.  It must not register as a client device:
-                # its IP is .1 (reserved for the server) and it should never appear
-                # in the pending-devices list regardless of which user is logged in.
-                _is_server_pc = tunnel.is_wg_server_running(wg_server_iface)
-
-                if _is_server_pc:
-                    # Server PC: skip client registration entirely.
-                    # Just grab the local keypair so node_id is available for the
-                    # heartbeat loop (server still sends heartbeats so the dashboard
-                    # can show it as online, but via the server's own device record).
-                    print(f"[WG] Server interface '{wg_server_iface}' is running on this PC — skipping client registration.")
-                    priv, pub = tunnel.get_or_create_keypair()
-                    node_id = pub
-                    self._device_id = None  # No client device record for this PC
-                else:
-                    # ── Client PC registration ───────────────────────────────
-                    # Only non-server PCs register as client devices.
-                    # Master/second_master who haven't set up the server yet should
-                    # go through claim_wg_server first; they also skip client reg.
-                    is_master_role = role in ("master", "second_master")
-                    has_wg_server = self._user_info.get("has_wg_server", False)
-
-                    if is_master_role and not has_wg_server:
-                        # Master with no server claimed yet — don't create a stray
-                        # client device record.  The claim-network / claim-wg-server
-                        # flow handles this separately.
-                        print("[WG] Master role with no WG server claimed — skipping client registration.")
-                        priv, pub = tunnel.get_or_create_keypair()
-                        node_id = pub
-                        self._device_id = None
-                    else:
-                        # Normal client registration path
-                        try:
-                            # pyrefly: ignore [missing-import]
-                            from services.network_monitor import _get_active_interface
-                            lan_ip = _get_active_interface()
-                            existing_priv, existing_pub = tunnel.get_or_create_keypair()
-                            req_data = {
-                                "hostname": socket.gethostname(),
-                                "lan_ip": lan_ip
-                            }
-                            if existing_pub:
-                                req_data["wg_public_key"] = existing_pub
-
-                            res = api._req("POST", "/api/devices/wg-register", json=req_data)
-                            config_str = res.get("config")
-                            assigned_ip = res.get("assigned_ip")
-                            server_pubkey = res.get("server_pubkey")
-                            server_endpoint = res.get("server_endpoint")
-                            server_endpoint_secondary = res.get("server_endpoint_secondary")
-                            priv = res.get("private_key") or existing_priv
-                            self._device_id = res.get("device_id")
-
-                            if config_str:
-                                import os
-                                # pyrefly: ignore [missing-import]
-                                from config import WG_CONFIG_DIR, WG_INTERFACE
-                                config_path = os.path.join(WG_CONFIG_DIR, f"{WG_INTERFACE}.conf")
-
-                                was_running = tunnel.is_wireguard_running()
-
-                                listen_port = 51820
-                                pub_ip, pub_port = tunnel.discover_stun(listen_port)
-                                if pub_ip and pub_port:
-                                    print(f"STUN Discovered Endpoint: {pub_ip}:{pub_port}")
-                                    # WireGuard handles endpoint updating automatically via PersistentKeepalive
-                                if priv:
-                                    config_str = config_str.replace("REPLACE_ME", priv)
-
-                                os.makedirs(os.path.dirname(config_path), exist_ok=True)
-                                config_changed = False
-                                if os.path.exists(config_path):
-                                    with open(config_path, "r") as f:
-                                        if f.read() != config_str:
-                                            config_changed = True
-                                else:
-                                    config_changed = True
-
-                                if config_changed:
-                                    with open(config_path, "w") as f:
-                                        f.write(config_str)
-
-                                import json
-                                failover_path = os.path.join(WG_CONFIG_DIR, "failover.json")
-                                if server_endpoint_secondary:
-                                    with open(failover_path, "w") as f:
-                                        json.dump({
-                                            "primary": server_endpoint,
-                                            "secondary": server_endpoint_secondary,
-                                            "current": "primary",
-                                            "priv": priv,
-                                            "assigned_ip": assigned_ip,
-                                            "server_pubkey": server_pubkey
-                                        }, f)
-                                else:
-                                    if os.path.exists(failover_path):
-                                        os.remove(failover_path)
-
-                                if config_changed:
-                                    if was_running:
-                                        tunnel.disconnect(WG_INTERFACE)
-                                    tunnel.connect(WG_INTERFACE)
-                                elif not was_running:
-                                    tunnel.connect(WG_INTERFACE)
-                            else:
-                                print("WireGuard registration error: Backend did not return valid details. (Is the wg0 interface running on the server?)")
-                        except Exception as e:
-                            print("WireGuard registration failed:", e)
-
-                        priv, pub = tunnel.get_or_create_keypair()
-                        node_id = pub
-            else:
-                if tunnel.is_zerotier_running():
-                    node_info = tunnel.get_node_info()
-                    node_id = node_info.get("address")
-                else:
-                    node_id = None
-    
-            if node_id:
-                def _do_heartbeat():
-                    try:
-                        tun_ip = tunnel.get_network_ip(network_id) if not TUNNEL_MODE == "wireguard" else ""
-                        if TUNNEL_MODE != "wireguard":
-                            api.register_device(node_id, network_id, zt_ip=tun_ip, hostname=socket.gethostname())
-                    except Exception:
-                        pass
-                    while True:
-                        try:
-                            # pyrefly: ignore [missing-import]
-                            from services.network_monitor import _get_active_interface
-                            lan_ip = _get_active_interface()
-                            
-                            if TUNNEL_MODE == "wireguard":
-                                # pyrefly: ignore [missing-import]
-                                from config import WG_INTERFACE
-                                target_id = WG_INTERFACE
-                            else:
-                                target_id = network_id
-    
-                            tun_ip = tunnel.get_network_ip(target_id)
-                            tun_status = tunnel.get_status(target_id)
-                            
-                            if tun_status == "disconnected" and TUNNEL_MODE == "wireguard":
-                                import os, json
-                                from config import WG_CONFIG_DIR, WG_INTERFACE
-                                failover_path = os.path.join(WG_CONFIG_DIR, "failover.json")
-                                if os.path.exists(failover_path):
-                                    with open(failover_path, "r") as f:
-                                        fdata = json.load(f)
-                                    
-                                    new_target = "secondary" if fdata.get("current") == "primary" else "primary"
-                                    ep = fdata.get(new_target)
-                                    if ep:
-                                        fdata["current"] = new_target
-                                        with open(failover_path, "w") as f:
-                                            json.dump(fdata, f)
-                                            
-                                        config_path = os.path.join(WG_CONFIG_DIR, f"{WG_INTERFACE}.conf")
-                                        tunnel.write_config(fdata["priv"], fdata["assigned_ip"], fdata["server_pubkey"], ep, config_path)
-                                        tunnel.disconnect(WG_INTERFACE)
-                                        tunnel.connect(WG_INTERFACE, assigned_ip)
-    
-                            if tun_status == "connected":
-                                import ipaddress
-                                lan_subnet = None
-                                if lan_ip:
-                                    try:
-                                        lan_subnet = str(ipaddress.ip_network(f"{lan_ip}/24", strict=False))
-                                    except Exception:
-                                        pass
-                                
-                                api.send_heartbeat(
-                                    node_id=node_id,
-                                    network_id=network_id,
-                                    zt_ip=tun_ip,
-                                    lan_ip=lan_ip,
-                                    hostname=socket.gethostname(),
-                                    lan_subnet=lan_subnet
-                                )
-                            
-                        except Exception:
-                            pass
-                        time.sleep(5)
-                threading.Thread(target=_do_heartbeat, daemon=True).start()
-
         role = self._user_info.get("role", "")
+        
         if role == "system_owner":
             self._main = OwnerWindow(api, self._user_info)
         else:
             self._main = MainWindow(api, self._user_info)
+            
         self._main.logged_out.connect(self._on_logout)
         self.root.set_view(self._main)
 
     def _on_logout(self):
+        tunnel_manager.stop()
         self._user_info = {}
         self._token_data = {}
         api.logout()
-        # pyrefly: ignore [missing-import]
-        from services.websocket_client import ws_client
-        ws_client.disconnect_ws()
         self._show_login()
 
     def run(self) -> int:
         self.root.showMaximized()
-        # pyrefly: ignore [missing-import]
         from widgets.common import cleanup_workers
-        # pyrefly: ignore [missing-import]
-        from services.websocket_client import ws_client
         
         def _on_quit():
             cleanup_workers()
-            ws_client.disconnect_ws()
             
         self.qt_app.aboutToQuit.connect(_on_quit)
         return self.qt_app.exec()

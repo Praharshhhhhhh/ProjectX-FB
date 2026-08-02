@@ -18,13 +18,13 @@ class UserOut(BaseModel):
     role: str
     is_active: bool
     is_trusted: bool
-    totp_enabled: bool
-    force_2fa: bool
+    force_otp: bool
     tenant_id: Optional[int]
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = {
+        "from_attributes": True
+    }
 
 
 class UserUpdate(BaseModel):
@@ -39,10 +39,6 @@ class TrustToggle(BaseModel):
 
 class Force2FAToggle(BaseModel):
     force_2fa: bool
-
-
-class AssignDeviceRequest(BaseModel):
-    device_id: int
 
 
 class RoleUpdate(BaseModel):

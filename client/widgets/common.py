@@ -12,7 +12,12 @@ import httpx
 from styles import ROLE_COLORS, STATUS_COLORS, LEVEL_COLORS
 
 
-ASSET_DIR = Path(__file__).resolve().parent.parent / "assets"
+import sys
+
+if getattr(sys, 'frozen', False):
+    ASSET_DIR = Path(sys._MEIPASS) / "assets"
+else:
+    ASSET_DIR = Path(__file__).resolve().parent.parent / "assets"
 
 
 def asset_path(name: str) -> Path:
@@ -274,7 +279,7 @@ def make_table(columns: list[str]) -> QTableWidget:
     return t
 
 
-def table_item(text: str, align=Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft) -> QTableWidgetItem:
+def table_item(text: str, align=Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignHCenter) -> QTableWidgetItem:
     # pyrefly: ignore [unnecessary-type-conversion]
     item = QTableWidgetItem(str(text))
     item.setTextAlignment(align)

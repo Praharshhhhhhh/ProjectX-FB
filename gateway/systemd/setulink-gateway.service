@@ -1,0 +1,15 @@
+[Unit]
+Description=SetuLink Gateway Daemon
+After=network.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/opt/setulink/gateway
+ExecStart=/opt/setulink/venv/bin/python main.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -1,4 +1,3 @@
-import asyncio
 import sys
 import os
 
@@ -8,42 +7,37 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
-# pyrefly: ignore [missing-import]
 from config import get_settings
-# pyrefly: ignore [missing-import]
 from database import Base, engine
-# pyrefly: ignore [missing-import]
 from models import User, UserRole
-# pyrefly: ignore [missing-import]
 from services.auth_service import hash_password
-# pyrefly: ignore [missing-import]
+from apscheduler.schedulers.background import BackgroundScheduler
+from services.gateway_provisioning_service import resync_gateway_state, reconcile_gateway_peers, prune_stale_desktop_peers
 import models  # ensure all models are imported before create_all
 
-# pyrefly: ignore [missing-import]
-from routers import auth, admin, users, devices, lan_devices, audit, ws, device_shares
-# pyrefly: ignore [missing-import]
-from services.device_monitor import run_monitor_loop
+from routers import auth, admin, users
+from routers import routers as routers_router
 
 settings = get_settings()
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     Base.metadata.create_all(bind=engine)
     _seed_system_owner()
-    
-    from services.wireguard_controller import start_hub
-    start_hub()
-    
-    await _rebuild_wireguard_peers()
-    
-    task = asyncio.create_task(run_monitor_loop(30))
+    scheduler = BackgroundScheduler()
+    scheduler.add_job(resync_gateway_state, 'interval', seconds=30)
+    scheduler.add_job(reconcile_gateway_peers, 'interval', seconds=60)
+    scheduler.add_job(prune_stale_desktop_peers, 'interval', seconds=60)
+    scheduler.start()
     yield
-    task.cancel()
+    scheduler.shutdown()
+
 
 app = FastAPI(
     title=settings.APP_NAME,
     version=settings.APP_VERSION,
-    description="ProjectX REST API — all UI is served by the PyQt6 desktop client.",
+    description="SetuLink REST API — Router Claim & Activation system.",
     lifespan=lifespan,
 )
 
@@ -56,20 +50,17 @@ app.add_middleware(
 )
 
 # ─── API Routers ───────────────────────────────────────────────────────────────
-for r in [auth.router, admin.router, users.router, devices.router, lan_devices.router, audit.router, ws.router, device_shares.router]:
+for r in [auth.router, admin.router, users.router, routers_router.router, routers_router.desktop_router]:
     app.include_router(r)
 
 
 # ─── Startup ───────────────────────────────────────────────────────────────────
-# Managed by lifespan context manager
-
 
 def _seed_system_owner():
-    # pyrefly: ignore [missing-import]
     from database import SessionLocal
     db = SessionLocal()
     try:
-        owner = db.query(User).filter(User.role == UserRole.system_owner).first()
+        owner = db.query(User).filter(User.email == settings.OWNER_EMAIL).first()
         if not owner:
             import uuid
             owner = User(
@@ -78,32 +69,24 @@ def _seed_system_owner():
                 hashed_password=hash_password(settings.OWNER_PASSWORD),
                 role=UserRole.system_owner,
                 is_active=True,
-                uuid=uuid.uuid4().hex
+                uuid=uuid.uuid4().hex,
             )
             db.add(owner)
             db.commit()
-            print("✅ System Owner created: owner@projectx.io / Admin@123")
+            print("System Owner created")
+            
+        # Seed TableAllocator if missing
+        from models.table_allocator import TableAllocator
+        alloc = db.query(TableAllocator).first()
+        if not alloc:
+            db.add(TableAllocator(next_wg_ip_octet=2, next_table_id=100))
+            db.commit()
+            print("TableAllocator seeded")
+            
     finally:
         db.close()
 
-async def _rebuild_wireguard_peers():
-    # Deprecated: The backend no longer forcefully manages WireGuard interfaces locally.
-    # We broadcast a mesh_updated event to all tenants so connected Hubs reconcile themselves.
-    from database import SessionLocal
-    from models import Tenant
-    from services.websocket_manager import manager
-    
-    db = SessionLocal()
-    try:
-        tenants = db.query(Tenant).all()
-        for t in tenants:
-            await manager.broadcast_to_tenant(t.id, {"event": "mesh_updated"})
-        print(f"✅ Sent mesh_updated broadcast to {len(tenants)} tenants for Hub reconciliation")
-    except Exception as e:
-        print(f"Failed to broadcast mesh_updated: {e}")
-    finally:
-        db.close()
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8001, reload=True)
+    uvicorn.run("main:app", host="0.0.0.0", port=8002, reload=True)
