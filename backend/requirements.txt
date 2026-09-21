@@ -1,0 +1,26 @@
+# ─────────────────────────────────────────────────────────────
+#  SetuLink — single requirements file (backend + tests)
+#  Install:  pip install -r requirements.txt
+# ─────────────────────────────────────────────────────────────
+
+# ── Backend (FastAPI API) ──
+fastapi
+uvicorn[standard]
+sqlalchemy
+pydantic[email]
+pydantic-settings
+python-jose[cryptography]
+cryptography>=42.0.0
+passlib
+bcrypt
+python-multipart
+psycopg2-binary
+alembic
+
+# ── Shared / Testing ──
+httpx
+python-dotenv
+pytest
+email-validator
+apscheduler
+requests

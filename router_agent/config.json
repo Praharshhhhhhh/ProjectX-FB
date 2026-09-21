@@ -1,0 +1,7 @@
+{
+  "serial_number": "RTR1",
+  "activation_key": "SG1WJIa3RuiGfgM75pwyGQ",
+  "api_url": "http://192.168.196.171:8002/api",
+  "lan_subnet": "192.168.29.0/24",
+  "zerotier_node_id": "ecfbb790a7"
+}
