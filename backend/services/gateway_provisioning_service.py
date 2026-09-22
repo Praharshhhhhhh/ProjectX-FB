@@ -89,7 +89,8 @@ def provision_router_task(registry_id: int):
                 if getattr(settings, 'MOCK_ZT_API', False):
                     # Mock ZT API for local testing
                     logger.info(f"MOCK_ZT_API is enabled. Stubbing ZT Central API calls.")
-                    router_zt_ip = f"10.147.17.{registry.id + 100}"
+                    mock_ip = getattr(settings, 'MOCK_ROUTER_IP', "")
+                    router_zt_ip = mock_ip if mock_ip else f"10.147.17.{registry.id + 100}"
                 else:
                     # Real ZT Central API calls
                     if not settings.ZT_API_TOKEN or not settings.GLOBAL_ZT_NETWORK_ID or not settings.GATEWAY_ZT_NODE_ID:

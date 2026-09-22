@@ -49,6 +49,7 @@ class Settings(BaseSettings):
     GATEWAY_ZT_NODE_ID: str = ""
     GLOBAL_ZT_NETWORK_ID: str = ""
     MOCK_ZT_API: bool = False
+    MOCK_ROUTER_IP: str = ""
 
     model_config = {
         "env_file": _ENV_FILE,
