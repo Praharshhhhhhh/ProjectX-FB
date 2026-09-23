@@ -301,7 +301,7 @@ class APIClient:
             "full_name": full_name,
             "password": password
         })
-        self.token = data["access_token"]
+        self.token = data.get("access_token", "")
         return data
 
     def get_users(self) -> list:

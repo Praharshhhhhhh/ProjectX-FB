@@ -195,6 +195,7 @@ def reconcile_gateway_peers():
     """
     Periodic job to ensure the Gateway has the correct WG peers.
     """
+    settings = get_settings()
     with SessionLocal() as db:
         active_peers = db.query(DesktopPeer).filter(DesktopPeer.active == True).all()
         expected_peers = {
@@ -217,6 +218,7 @@ def prune_stale_desktop_peers():
     """
     Periodic job to mark peers inactive if they haven't sent a heartbeat recently.
     """
+    settings = get_settings()
     with SessionLocal() as db:
         now = datetime.utcnow()
         threshold = now - timedelta(minutes=5)

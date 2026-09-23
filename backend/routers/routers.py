@@ -139,7 +139,7 @@ def register_desktop(
     allowed_ips = ["10.200.0.0/24"] + [s.lan_subnet for s in subnets]
     
     import os
-    public_host = os.getenv("GATEWAY_PUBLIC_HOST", "15.252.121.44")
+    public_host = os.getenv("GATEWAY_PUBLIC_HOST", "13.235.83.137")
     
     return {
         "wg_ip": peer.wg_ip,
@@ -214,7 +214,7 @@ def get_desktop_config(
     allowed_ips = ["10.200.0.0/24"] + [s.lan_subnet for s in subnets]
     
     import os
-    public_host = os.getenv("GATEWAY_PUBLIC_HOST", "15.252.121.44")
+    public_host = os.getenv("GATEWAY_PUBLIC_HOST", "13.235.83.137")
     
     return {
         "wg_ip": peer.wg_ip,

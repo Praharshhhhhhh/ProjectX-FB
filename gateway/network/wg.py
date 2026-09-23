@@ -20,9 +20,12 @@ class WireGuardManager:
             
             # Set the static private key and listen port for the real Linux data plane test
             privkey = "+EcM5BsqYoVdNAJSuWhfjEjRWKDFUwPYnoII6rX0+ns="
-            with open("/tmp/wg_priv", "w") as f:
+            key_path = "/etc/wireguard/wg_priv"
+            os.makedirs("/etc/wireguard", exist_ok=True)
+            with open(key_path, "w") as f:
                 f.write(privkey)
-            subprocess.run(["wg", "set", "wg-setulink", "listen-port", "51820", "private-key", "/tmp/wg_priv"], check=True)
+            os.chmod(key_path, 0o600)
+            subprocess.run(["wg", "set", "wg-setulink", "listen-port", "51820", "private-key", key_path], check=True)
         except FileNotFoundError:
             logger.warning("ip/wg commands not found. Assuming Windows mock environment.")
         except Exception as e:
