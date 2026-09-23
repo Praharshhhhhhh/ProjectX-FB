@@ -348,8 +348,8 @@ class APIClient:
             "public_key": public_key
         })
 
-    def get_desktop_config(self) -> dict:
-        return self._req("GET", "/api/desktop/config")
+    def get_desktop_config(self, device_name: str) -> dict:
+        return self._req("GET", f"/api/desktop/config?device_name={device_name}")
 
 
 api = APIClient()

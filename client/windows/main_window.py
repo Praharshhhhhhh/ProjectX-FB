@@ -1912,35 +1912,6 @@ class MainWindow(QMainWindow):
         self._banner_timer = QTimer(self)
         self._banner_timer.timeout.connect(self._update_offline_banner)
         self._banner_timer.start(60000)
-        self._init_wireguard()
-
-    def _init_wireguard(self):
-        from services.wireguard_local import wireguard_local
-        import socket
-        try:
-            pubkey, _ = wireguard_local.generate_or_load_keys()
-            hostname = socket.gethostname()
-            config = self.api.register_desktop(pubkey, hostname)
-            wireguard_local.start_tunnel(
-                wg_ip=config["wg_ip"],
-                endpoint=config["endpoint"],
-                gateway_pubkey=config.get("gateway_pubkey", ""),
-                allowed_ips=config["allowed_ips"]
-            )
-            self._hb_timer = QTimer(self)
-            self._hb_timer.timeout.connect(self._send_heartbeat)
-            self._hb_timer.start(60000)
-        except Exception as e:
-            print(f"Failed to initialize WireGuard: {e}")
-
-    def _send_heartbeat(self):
-        from services.wireguard_local import wireguard_local
-        try:
-            pubkey, _ = wireguard_local.generate_or_load_keys()
-            self.api.heartbeat_desktop(pubkey)
-        except Exception as e:
-            print(f"Failed to send heartbeat: {e}")
-
     def _do_refresh(self):
         page = getattr(self, "_pages", {}).get(self._current_page, getattr(self, "_pages", {}).get("devices"))
         if page:

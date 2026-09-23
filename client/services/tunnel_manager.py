@@ -89,7 +89,7 @@ class TunnelManager(QObject):
             api.register_desktop(self._device_name, public_key=self._public_key)
             
             # Fetch config
-            config = api.get_desktop_config()
+            config = api.get_desktop_config(self._device_name)
             self._wg_ip = config["wg_ip"]
             self._endpoint = config["endpoint"]
             self._gateway_pubkey = config["gateway_pubkey"]
@@ -179,17 +179,19 @@ class ZeroTierTunnelManager(QObject):
 
     def _loop(self):
         node_id = None
-        while not self._shutdown_event.is_set():
+        attempts = 0
+        while not self._shutdown_event.is_set() and attempts < 3:
             node_id = zerotier_local.get_node_id()
             if node_id:
                 break
+            attempts += 1
             time.sleep(2)
             
         if self._shutdown_event.is_set(): return
         
         try:
             api.register_desktop(self._device_name, zerotier_node_id=node_id)
-            config = api.get_desktop_config()
+            config = api.get_desktop_config(self._device_name)
             zt_network_id = config.get("zt_network_id")
             
             if zt_network_id:

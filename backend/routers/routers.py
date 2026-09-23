@@ -110,6 +110,27 @@ def register_desktop(
                 headers={"X-Gateway-Token": settings.GATEWAY_API_TOKEN},
                 timeout=2
             )
+            
+            # Re-provision all routers to include this new peer in PBR
+            subnets = db.query(SubnetRegistry).filter(SubnetRegistry.tenant_id == current_user.tenant_id).all()
+            for sub in subnets:
+                all_peers = db.query(DesktopPeer).filter(
+                    DesktopPeer.tenant_id == current_user.tenant_id,
+                    DesktopPeer.tunnel_state == "connected"
+                ).all()
+                requests.post(
+                    f"http://{settings.GATEWAY_HOST}:{settings.GATEWAY_API_PORT}/v1/provision",
+                    json={
+                        "registry_id": sub.router_id,
+                        "router_zt_ip": sub.router_zt_ip,
+                        "zt_network_id": settings.GLOBAL_ZT_NETWORK_ID,
+                        "table_id": 100 + sub.router_id,
+                        "lan_subnet": sub.lan_subnet,
+                        "allowed_peer_ips": [p.wg_ip for p in all_peers]
+                    },
+                    headers={"X-Gateway-Token": settings.GATEWAY_API_TOKEN},
+                    timeout=3
+                )
         except Exception:
             pass
 
@@ -117,9 +138,12 @@ def register_desktop(
     subnets = db.query(SubnetRegistry).filter(SubnetRegistry.tenant_id == current_user.tenant_id).all()
     allowed_ips = ["10.200.0.0/24"] + [s.lan_subnet for s in subnets]
     
+    import os
+    public_host = os.getenv("GATEWAY_PUBLIC_HOST", "15.252.121.44")
+    
     return {
         "wg_ip": peer.wg_ip,
-        "endpoint": f"{settings.GATEWAY_HOST}:{settings.GATEWAY_WG_PORT}",
+        "endpoint": f"{public_host}:{settings.GATEWAY_WG_PORT}",
         "allowed_ips": allowed_ips,
         "zt_network_id": settings.GLOBAL_ZT_NETWORK_ID
     }
@@ -175,11 +199,13 @@ def disconnect_desktop(
 
 @desktop_router.get("/config")
 def get_desktop_config(
+    device_name: str,
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[Session, Depends(get_db)],
 ):
     peer = db.query(DesktopPeer).filter(
-        DesktopPeer.user_id == current_user.id
+        DesktopPeer.user_id == current_user.id,
+        DesktopPeer.device_name == device_name
     ).first()
     if not peer:
         raise HTTPException(status_code=404, detail="Desktop peer not registered")
@@ -187,9 +213,12 @@ def get_desktop_config(
     subnets = db.query(SubnetRegistry).filter(SubnetRegistry.tenant_id == current_user.tenant_id).all()
     allowed_ips = ["10.200.0.0/24"] + [s.lan_subnet for s in subnets]
     
+    import os
+    public_host = os.getenv("GATEWAY_PUBLIC_HOST", "15.252.121.44")
+    
     return {
         "wg_ip": peer.wg_ip,
-        "endpoint": f"{settings.GATEWAY_HOST}:{settings.GATEWAY_WG_PORT}",
+        "endpoint": f"{public_host}:{settings.GATEWAY_WG_PORT}",
         "gateway_pubkey": settings.GATEWAY_PUBKEY,
         "allowed_ips": allowed_ips,
         "public_key": peer.public_key,
